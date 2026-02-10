@@ -1,5 +1,6 @@
 # Windows-Paint-AI-Version
-画图AI版
+
+# 画图AI版
 
 
 2026年，当别人还在卷Midjourney、抢Stable Diffusion的额度时——
