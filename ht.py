@@ -4,11 +4,13 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QMenuBar, QMenu, QAction, QStatusBar, QScrollArea,
                              QComboBox, QSpinBox, QDoubleSpinBox, QFrame, QDialog, QDialogButtonBox,
                              QGroupBox, QRadioButton, QLineEdit, QFormLayout,
-                             QMessageBox, QFileDialog, QFontDialog,
+                             QMessageBox, QFileDialog, QFontDialog, QColorDialog,
                              QTabWidget, QCheckBox, QSlider, QTextEdit, QProgressBar)  # 添加缺失的类
 from PyQt5.QtCore import Qt, QPoint, QRect, QTimer, QSize, QThread, pyqtSignal, QMimeData
 from PyQt5.QtGui import QPainter, QPen, QColor, QPixmap, QIcon, QFont, QTransform, QBrush, QImage
 from PyQt5.QtGui import QClipboard, QPainterPath  # 添加剪贴板支持和绘图路径
+from PyQt5.QtGui import QFontDatabase  # 添加字体数据库支持
+from PyQt5.QtPrintSupport import QPrinter, QPrintDialog, QPrintPreviewDialog  # 添加打印支持
 import base64
 import random
 import datetime
@@ -1130,49 +1132,315 @@ class FlipRotateDialog(QDialog):
         return "rotate_90"
 
 
+class TextInputWidget(QLineEdit):
+    """增强的文字输入框 - 更稳定可靠"""
+    returnPressed = pyqtSignal()  # 保持与原版的兼容性
+    selection_font_changed = pyqtSignal(QFont)  # 字体变化信号
+    
+    def __init__(self, parent=None, canvas_pos=None):
+        super().__init__(parent)
+        self.canvas_pos = canvas_pos or QPoint()
+        self.setMinimumSize(100, 25)
+        self.dragging = False
+        self.drag_start_pos = QPoint()
+        
+        # 简洁实用的样式
+        self.setStyleSheet("""
+            QLineEdit {
+                border: 2px solid #316AC5;
+                border-radius: 3px;
+                background-color: white;
+                padding: 4px;
+                selection-background-color: #316AC5;
+                selection-color: white;
+            }
+            QLineEdit:focus {
+                border-color: #316AC5;
+                outline: none;
+            }
+        """)
+        
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.textChanged.connect(self.on_text_changed)
+        
+    def on_text_changed(self):
+        """文字变化时发送字体信号"""
+        self.selection_font_changed.emit(self.font())
+        
+    def focusInEvent(self, event):
+        """获取焦点时同步字体"""
+        super().focusInEvent(event)
+        self.selection_font_changed.emit(self.font())
+        
+    def setFont(self, font):
+        """设置字体并自动调整大小 - 修复大字号问题"""
+        # 设置新字体
+        super().setFont(font)
+        
+        # 获取字体度量
+        metrics = self.fontMetrics()
+        text_height = metrics.height()
+        
+        # 获取当前字号，用于比例计算
+        font_size = font.pointSize()
+        if font_size <= 0:
+            font_size = 12  # 默认值
+            
+        # 计算新尺寸 - 基于字号的动态计算
+        current_text = self.text()
+        if current_text:
+            text_width = metrics.width(current_text)
+            # 基础宽度 + 文字宽度 + 字号比例调整
+            base_width = 120
+            width_scale = max(1.0, font_size / 12.0)  # 12号字为基准
+            new_width = max(base_width * width_scale, text_width + 30)
+        else:
+            # 空文字时的默认宽度，基于字号
+            base_width = 120
+            width_scale = max(1.0, font_size / 12.0)
+            new_width = base_width * width_scale
+            
+        # 高度计算 - 基于字号的动态计算
+        base_height = 30
+        height_scale = max(1.0, font_size / 12.0)
+        new_height = max(base_height * height_scale, text_height + 12)
+        
+        # 确保最小尺寸合理
+        new_width = max(new_width, 80)
+        new_height = max(new_height, 30)
+        
+        # 确保最大尺寸不超过合理范围
+        new_width = min(new_width, 800)  # 最大800像素
+        new_height = min(new_height, 200)  # 最大200像素
+        
+        # 应用新尺寸
+        self.setFixedSize(int(new_width), int(new_height))
+        
+        # 强制立即重绘
+        self.update()
+        self.repaint()
+        
+    def keyPressEvent(self, event):
+        """键盘事件 - 简化处理"""
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Escape):
+            self.returnPressed.emit()
+        else:
+            super().keyPressEvent(event)
+    
+    def mousePressEvent(self, event):
+        """鼠标按下事件 - 添加拖动支持"""
+        if event.button() == Qt.LeftButton:
+            # 检查是否点击在边框区域（用于拖动）
+            margin = 8
+            in_border = (event.pos().x() < margin or
+                        event.pos().x() > self.width() - margin or
+                        event.pos().y() < margin or
+                        event.pos().y() > self.height() - margin)
+            
+            if in_border:
+                # 开始拖动
+                self.dragging = True
+                self.drag_start_pos = event.pos()
+                self.setCursor(Qt.SizeAllCursor)
+                event.accept()
+                return
+        
+        # 在内容区域，正常处理文字输入
+        super().mousePressEvent(event)
+    
+    def mouseMoveEvent(self, event):
+        """鼠标移动事件 - 拖动支持"""
+        if self.dragging and (event.buttons() & Qt.LeftButton):
+            # 拖动模式
+            delta = event.pos() - self.drag_start_pos
+            new_pos = self.pos() + delta
+            self.move(new_pos)
+            self.canvas_pos = new_pos
+            
+            # 通知父窗口位置变化
+            if self.parent() and hasattr(self.parent(), 'on_text_input_moved'):
+                self.parent().on_text_input_moved(new_pos)
+                
+            event.accept()
+        elif not (event.buttons() & Qt.LeftButton):
+            # 鼠标悬停时，根据位置改变光标
+            margin = 8
+            in_border = (event.pos().x() < margin or
+                        event.pos().x() > self.width() - margin or
+                        event.pos().y() < margin or
+                        event.pos().y() > self.height() - margin)
+            
+            if in_border:
+                self.setCursor(Qt.SizeAllCursor)  # 边框区域显示移动光标
+            else:
+                self.unsetCursor()  # 内容区域恢复默认光标
+                
+            super().mouseMoveEvent(event)
+        else:
+            super().mouseMoveEvent(event)
+            
+    def mouseReleaseEvent(self, event):
+        """鼠标释放事件 - 拖动支持"""
+        if event.button() == Qt.LeftButton and self.dragging:
+            self.dragging = False
+            self.unsetCursor()
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+    
+    def leaveEvent(self, event):
+        """鼠标离开时恢复光标"""
+        if not self.dragging:
+            self.unsetCursor()
+        super().leaveEvent(event)
+
+
 class TextToolDialog(QDialog):
-    """文字工具对话框"""
+    """文字工具对话框 - 简化和增强版"""
+    font_changed = pyqtSignal(QFont)  # 保持兼容性
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("文字工具栏")
-        self.setFixedSize(250, 80)
+        self.setFixedSize(480, 140)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
         
+        self.setup_ui()
+        self.connect_signals()
+        
+    def connect_signals(self):
+        """连接信号"""
+        self.font_combo.currentTextChanged.connect(self.on_font_changed)
+        self.size_combo.currentTextChanged.connect(self.on_font_changed)
+        self.bold_btn.toggled.connect(self.on_font_changed)
+        self.italic_btn.toggled.connect(self.on_font_changed)
+        self.underline_btn.toggled.connect(self.on_font_changed)
+        
+    def setup_ui(self):
+        """设置界面 - 简化版"""
         layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+        layout.setContentsMargins(20, 20, 20, 20)
         
         # 字体选择区域
         font_widget = QWidget()
         font_layout = QHBoxLayout(font_widget)
+        font_layout.setSpacing(8)
         
         self.font_combo = QComboBox()
-        self.font_combo.addItems(["Fixesys", "Arial", "Times New Roman", "Courier New"])
-        self.font_combo.setEditable(True)
-        self.font_combo.setCurrentText("Fixesys")
+        font_database = QFontDatabase()
+        self.font_combo.addItems(font_database.families())
+        default_font = QFont()
+        self.font_combo.setCurrentText(default_font.family())
+        self.font_combo.setFixedHeight(28)
+        self.font_combo.setStyleSheet("""
+            QComboBox {
+                font-size: 12px;
+                padding: 3px;
+                border: 1px solid #808080;
+                border-radius: 3px;
+                background-color: white;
+                min-width: 160px;
+            }
+            QComboBox:hover {
+                border-color: #000000;
+            }
+        """)
         
         self.size_combo = QComboBox()
-        self.size_combo.addItems(["8", "9", "10", "11", "12", "14", "16", "18", "20", "22", "24"])
-        self.size_combo.setEditable(True)
+        self.size_combo.addItems(["8", "9", "10", "11", "12", "14", "16", "18", "20", "22", "24", "28", "32", "36", "48", "72"])
         self.size_combo.setCurrentText("12")
+        self.size_combo.setFixedHeight(28)
+        self.size_combo.setFixedWidth(70)
+        self.size_combo.setStyleSheet("""
+            QComboBox {
+                font-size: 12px;
+                padding: 3px;
+                border: 1px solid #808080;
+                border-radius: 3px;
+                background-color: white;
+            }
+            QComboBox:hover {
+                border-color: #000000;
+            }
+        """)
         
         font_layout.addWidget(self.font_combo)
         font_layout.addWidget(self.size_combo)
+        font_layout.addStretch()
         
         layout.addWidget(font_widget)
         
         # 按钮区域
         button_widget = QWidget()
         button_layout = QHBoxLayout(button_widget)
+        button_layout.setSpacing(6)
         
         self.bold_btn = QPushButton("B")
         self.bold_btn.setCheckable(True)
-        self.bold_btn.setFixedSize(30, 30)
+        self.bold_btn.setFixedSize(32, 28)
+        self.bold_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 12px;
+                font-weight: bold;
+                background-color: #E0E0E0;
+                border: 1px solid #808080;
+                border-radius: 3px;
+                padding: 2px;
+            }
+            QPushButton:hover {
+                background-color: #D0D0D0;
+                border-color: #000000;
+            }
+            QPushButton:pressed, QPushButton:checked {
+                background-color: #C0C0C0;
+                border: 1px inset #606060;
+            }
+        """)
         
         self.italic_btn = QPushButton("I")
         self.italic_btn.setCheckable(True)
-        self.italic_btn.setFixedSize(30, 30)
+        self.italic_btn.setFixedSize(32, 28)
+        self.italic_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 12px;
+                font-style: italic;
+                background-color: #E0E0E0;
+                border: 1px solid #808080;
+                border-radius: 3px;
+                padding: 2px;
+            }
+            QPushButton:hover {
+                background-color: #D0D0D0;
+                border-color: #000000;
+            }
+            QPushButton:pressed, QPushButton:checked {
+                background-color: #C0C0C0;
+                border: 1px inset #606060;
+            }
+        """)
         
         self.underline_btn = QPushButton("U")
         self.underline_btn.setCheckable(True)
-        self.underline_btn.setFixedSize(30, 30)
+        self.underline_btn.setFixedSize(32, 28)
+        self.underline_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 12px;
+                text-decoration: underline;
+                background-color: #E0E0E0;
+                border: 1px solid #808080;
+                border-radius: 3px;
+                padding: 2px;
+            }
+            QPushButton:hover {
+                background-color: #D0D0D0;
+                border-color: #000000;
+            }
+            QPushButton:pressed, QPushButton:checked {
+                background-color: #C0C0C0;
+                border: 1px inset #606060;
+            }
+        """)
         
         button_layout.addWidget(self.bold_btn)
         button_layout.addWidget(self.italic_btn)
@@ -1181,32 +1449,115 @@ class TextToolDialog(QDialog):
         
         layout.addWidget(button_widget)
         
-        # 设置样式
+        # 连接信号
+        self.font_combo.currentTextChanged.connect(self.on_font_changed)
+        self.size_combo.currentTextChanged.connect(self.on_font_changed)
+        self.bold_btn.toggled.connect(self.on_font_changed)
+        self.italic_btn.toggled.connect(self.on_font_changed)
+        self.underline_btn.toggled.connect(self.on_font_changed)
+        
+        # 设置整体样式
         self.setStyleSheet("""
             QDialog {
-                background-color: #ECE9D8;
+                background-color: #F0F0F0;
+                border: 2px solid #808080;
+                border-radius: 0px;
             }
             QPushButton {
-                background-color: #D4D0C8;
+                background-color: #E0E0E0;
                 border: 1px solid #808080;
-                font-weight: bold;
+                border-radius: 3px;
+                font-size: 12px;
+                padding: 2px;
+                min-width: 32px;
+                min-height: 28px;
             }
             QPushButton:hover {
-                background-color: #E8E5D8;
+                background-color: #D0D0D0;
+                border-color: #000000;
             }
             QPushButton:pressed, QPushButton:checked {
                 background-color: #C0C0C0;
-                border: 2px inset #404040;
+                border: 1px inset #606060;
             }
         """)
     
     def get_font(self):
-        """获取选中的字体"""
-        font = QFont(self.font_combo.currentText(), int(self.size_combo.currentText()))
+        """获取选中的字体 - 增强版"""
+        # 获取字号，确保是有效的数字
+        try:
+            size_text = self.size_combo.currentText()
+            font_size = int(size_text)
+        except (ValueError, TypeError):
+            font_size = 12  # 默认值
+            
+        # 创建字体对象
+        font = QFont(self.font_combo.currentText(), font_size)
         font.setBold(self.bold_btn.isChecked())
         font.setItalic(self.italic_btn.isChecked())
         font.setUnderline(self.underline_btn.isChecked())
+        
+        # 确保字号设置正确
+        if font.pointSize() != font_size:
+            font.setPointSize(font_size)
+            
         return font
+        
+    def set_font_from_widget(self, font):
+        """从文字输入框同步字体状态 - 增强版"""
+        # 阻止信号触发，避免循环
+        self.font_combo.blockSignals(True)
+        self.size_combo.blockSignals(True)
+        self.bold_btn.blockSignals(True)
+        self.italic_btn.blockSignals(True)
+        self.underline_btn.blockSignals(True)
+        
+        # 更新工具栏状态
+        self.font_combo.setCurrentText(font.family())
+        
+        # 确保字号正确设置
+        font_size = font.pointSize()
+        if font_size > 0:
+            self.size_combo.setCurrentText(str(font_size))
+        else:
+            # 如果pointSize无效，尝试pixelSize转换
+            pixel_size = font.pixelSize()
+            if pixel_size > 0:
+                # 粗略转换：假设1pt ≈ 1.33px
+                approx_point_size = max(8, min(72, int(pixel_size / 1.33)))
+                self.size_combo.setCurrentText(str(approx_point_size))
+            else:
+                self.size_combo.setCurrentText("12")  # 默认值
+                
+        self.bold_btn.setChecked(font.bold())
+        self.italic_btn.setChecked(font.italic())
+        self.underline_btn.setChecked(font.underline())
+        
+        # 恢复信号
+        self.font_combo.blockSignals(False)
+        self.size_combo.blockSignals(False)
+        self.bold_btn.blockSignals(False)
+        self.italic_btn.blockSignals(False)
+        self.underline_btn.blockSignals(False)
+        
+    def on_font_changed(self):
+        """字体变化时的处理 - 增强焦点管理"""
+        current_font = self.get_font()
+        # 确保总是发出字体变化信号，即使在set_font_from_widget中
+        self.font_changed.emit(current_font)
+        
+        # 强制立即处理信号，避免延迟
+        QApplication.processEvents()
+        
+        # 确保对话框保持激活状态，但不抢夺焦点
+        if self.isActiveWindow():
+            # 如果对话框是激活的，确保不抢夺输入框焦点
+            # 让父窗口处理焦点管理
+            if self.parent() and hasattr(self.parent(), 'text_input_widget'):
+                parent = self.parent()
+                if parent.text_input_widget and parent.text_input_widget.isVisible():
+                    # 延迟一点点时间再设置焦点，避免抢夺
+                    QTimer.singleShot(10, lambda: parent.text_input_widget.setFocus())
 
 
 class PaintCanvas(QWidget):
@@ -1232,6 +1583,7 @@ class PaintCanvas(QWidget):
         
         # 文字工具相关
         self.text_tool_dialog = None
+        self.text_input_widget = None  # 文字输入框
         self.text_start_point = None
         self.text_content = ""
         self.text_font = QFont("Fixesys", 12)
@@ -1268,6 +1620,15 @@ class PaintCanvas(QWidget):
         self.polygon_fill_mode = "outline"  # 多边形填充模式: "outline"(仅轮廓), "filled"(轮廓+填充), "fill_only"(仅填充)
         self._last_polygon_click_time = 0  # 用于检测双击
         self._last_mouse_pos = QPoint()  # 记录鼠标位置用于预览
+        
+        # 曲线绘制相关
+        self.curve_points = []  # 曲线控制点
+        self.curve_drawing = False  # 曲线绘制状态
+        self._last_curve_click_time = 0  # 用于检测双击
+        self.curve_button = None  # 记录使用的鼠标按钮（左键或右键）
+        
+        # 形状填充模式
+        self.shape_fill_mode = "outline"  # "outline"(仅边框), "filled"(边框+填充), "fill_only"(仅填充)
         
         # 画布调整大小相关
         self.resizing_mode = None  # "right", "bottom", "corner"
@@ -1401,6 +1762,116 @@ class PaintCanvas(QWidget):
         self.polygon_drawing = False
         self.polygon_points = []
         self.polygon_preview = None
+        if self.temp_image:
+            self.image = self.temp_image.copy()
+        self.update()
+    
+    def catmull_rom_spline(self, p0, p1, p2, p3, num_points=20):
+        """
+        计算Catmull-Rom样条曲线上的点
+        p0, p1, p2, p3: 四个控制点 (QPoint)
+        num_points: 在p1和p2之间生成的点数
+        返回: 点的列表
+        """
+        points = []
+        for i in range(num_points + 1):
+            t = i / num_points
+            t2 = t * t
+            t3 = t2 * t
+            
+            # Catmull-Rom 样条公式
+            x = 0.5 * (
+                (2 * p1.x()) +
+                (-p0.x() + p2.x()) * t +
+                (2*p0.x() - 5*p1.x() + 4*p2.x() - p3.x()) * t2 +
+                (-p0.x() + 3*p1.x() - 3*p2.x() + p3.x()) * t3
+            )
+            y = 0.5 * (
+                (2 * p1.y()) +
+                (-p0.y() + p2.y()) * t +
+                (2*p0.y() - 5*p1.y() + 4*p2.y() - p3.y()) * t2 +
+                (-p0.y() + 3*p1.y() - 3*p2.y() + p3.y()) * t3
+            )
+            points.append(QPoint(int(x), int(y)))
+        
+        return points
+    
+    def draw_catmull_rom_curve(self, points, painter=None):
+        """
+        绘制完整的Catmull-Rom样条曲线
+        points: 控制点列表
+        painter: 如果提供，使用此painter，否则在self.image上绘制
+        """
+        if len(points) < 2:
+            return
+        
+        should_end = False
+        if painter is None:
+            painter = QPainter(self.image)
+            painter.setRenderHint(QPainter.Antialiasing)
+            should_end = True
+        
+        # 根据鼠标按钮确定颜色
+        draw_color = self.pen_color if self.curve_button == Qt.LeftButton else self.bg_color
+        painter.setPen(QPen(draw_color, self.pen_width, self.pen_style, Qt.RoundCap, Qt.RoundJoin))
+        
+        if len(points) == 2:
+            # 只有两个点，绘制直线
+            painter.drawLine(points[0], points[1])
+        elif len(points) == 3:
+            # 三个点，使用第一个点作为虚拟起点
+            curve_points = self.catmull_rom_spline(points[0], points[0], points[1], points[2])
+            for i in range(len(curve_points) - 1):
+                painter.drawLine(curve_points[i], curve_points[i + 1])
+            curve_points = self.catmull_rom_spline(points[0], points[1], points[2], points[2])
+            for i in range(len(curve_points) - 1):
+                painter.drawLine(curve_points[i], curve_points[i + 1])
+        else:
+            # 四个或更多点，绘制完整的Catmull-Rom样条
+            # 第一段：使用第一个点作为虚拟起点
+            curve_points = self.catmull_rom_spline(points[0], points[0], points[1], points[2])
+            for i in range(len(curve_points) - 1):
+                painter.drawLine(curve_points[i], curve_points[i + 1])
+            
+            # 中间段
+            for i in range(len(points) - 3):
+                curve_points = self.catmull_rom_spline(points[i], points[i+1], points[i+2], points[i+3])
+                for j in range(len(curve_points) - 1):
+                    painter.drawLine(curve_points[j], curve_points[j + 1])
+            
+            # 最后一段：使用最后一个点作为虚拟终点
+            curve_points = self.catmull_rom_spline(points[-3], points[-2], points[-1], points[-1])
+            for i in range(len(curve_points) - 1):
+                painter.drawLine(curve_points[i], curve_points[i + 1])
+        
+        if should_end:
+            painter.end()
+    
+    def finish_curve(self):
+        """完成曲线绘制"""
+        if len(self.curve_points) < 2:
+            # 点太少，取消绘制
+            self.cancel_curve()
+            return
+        
+        # 在画布上绘制最终曲线
+        self.draw_catmull_rom_curve(self.curve_points)
+        self.mark_content_modified()
+        
+        # 清除曲线绘制状态
+        self.curve_drawing = False
+        self.curve_points = []
+        self.curve_button = None
+        self._last_curve_click_time = 0
+        self.temp_image = None
+        self.update()
+    
+    def cancel_curve(self):
+        """取消曲线绘制"""
+        self.curve_drawing = False
+        self.curve_points = []
+        self.curve_button = None
+        self._last_curve_click_time = 0
         if self.temp_image:
             self.image = self.temp_image.copy()
         self.update()
@@ -1829,6 +2300,59 @@ class PaintCanvas(QWidget):
                     painter.setPen(QPen(draw_color, 1, Qt.SolidLine))
                     painter.setBrush(QBrush(draw_color))
                     painter.drawEllipse(point, 3, 3)
+        
+        # 绘制曲线预览（Catmull-Rom样条）
+        if self.curve_drawing and len(self.curve_points) > 0:
+            painter.setRenderHint(QPainter.Antialiasing)
+            
+            # 根据鼠标按钮确定颜色
+            draw_color = self.pen_color if self.curve_button == Qt.LeftButton else self.bg_color
+            
+            # 绘制已确定的曲线
+            if len(self.curve_points) >= 2:
+                # 绘制实际的曲线
+                temp_points = list(self.curve_points)
+                self.draw_catmull_rom_curve(temp_points, painter)
+            
+            # 绘制预览曲线（包含鼠标位置）
+            if hasattr(self, '_last_mouse_pos') and self._last_mouse_pos and len(self.curve_points) >= 1:
+                painter.setPen(QPen(draw_color, 1, Qt.DashLine))
+                # 添加鼠标位置作为临时控制点绘制预览
+                preview_points = list(self.curve_points) + [self._last_mouse_pos]
+                if len(preview_points) >= 2:
+                    # 绘制到鼠标位置的预览线
+                    temp_color = QColor(draw_color)
+                    temp_color.setAlpha(128)  # 半透明
+                    painter.setPen(QPen(temp_color, 1, Qt.DashLine))
+                    
+                    if len(preview_points) == 2:
+                        painter.drawLine(preview_points[0], preview_points[1])
+                    elif len(preview_points) == 3:
+                        curve_points = self.catmull_rom_spline(preview_points[0], preview_points[0], 
+                                                               preview_points[1], preview_points[2], 10)
+                        for i in range(len(curve_points) - 1):
+                            painter.drawLine(curve_points[i], curve_points[i + 1])
+                        curve_points = self.catmull_rom_spline(preview_points[0], preview_points[1], 
+                                                               preview_points[2], preview_points[2], 10)
+                        for i in range(len(curve_points) - 1):
+                            painter.drawLine(curve_points[i], curve_points[i + 1])
+                    else:
+                        # 绘制最后一段预览
+                        curve_points = self.catmull_rom_spline(preview_points[-4], preview_points[-3], 
+                                                               preview_points[-2], preview_points[-1], 10)
+                        for i in range(len(curve_points) - 1):
+                            painter.drawLine(curve_points[i], curve_points[i + 1])
+            
+            # 绘制控制点标记
+            painter.setPen(QPen(draw_color, 1, Qt.SolidLine))
+            painter.setBrush(QBrush(draw_color))
+            for i, point in enumerate(self.curve_points):
+                if i == 0:
+                    # 起始点用方块标记
+                    painter.drawRect(point.x() - 3, point.y() - 3, 6, 6)
+                else:
+                    # 其他点用圆点标记
+                    painter.drawEllipse(point, 3, 3)
 
         # 绘制调整大小控制点
         if not self.drawing and not self.selection_active and not self.crop_drawing:
@@ -1857,6 +2381,18 @@ class PaintCanvas(QWidget):
             painter.drawRect(corner_x, corner_y, handle_size, handle_size)
     
     def mousePressEvent(self, event):
+        # 如果正在文字模式，检查是否点击在输入框外，如果是则提交文字
+        if self.is_text_mode and self.text_input_widget:
+            # 获取输入框的全局位置
+            widget_rect = QRect(self.text_input_widget.pos(), self.text_input_widget.size())
+            if not widget_rect.contains(event.pos()):
+                # 点击在输入框外，提交文字
+                self.finish_text_input()
+                # 如果是文字工具，继续处理（创建新的输入框）
+                # 如果不是文字工具，已经提交，直接返回
+                if self.current_tool != "text":
+                    return
+        
         if event.button() in [Qt.LeftButton, Qt.RightButton]:
             # 检查是否点击了调整大小控制点
             if not self.drawing and not self.selection_active and not self.crop_drawing:
@@ -1957,7 +2493,64 @@ class PaintCanvas(QWidget):
                     self.update()
                     return
             
+            # 曲线工具的特殊处理（在选区检测之后处理）
+            if self.current_tool == "curve":
+                # 左键和右键都可以绘制曲线
+                if event.button() in [Qt.LeftButton, Qt.RightButton]:
+                    # 检测双击（300ms内的第二次点击相同按钮）
+                    import time
+                    current_time = time.time() * 1000  # 转换为毫秒
+                    time_diff = current_time - self._last_curve_click_time
+                    
+                    # 检查是否双击同一个按钮
+                    same_button = (self.curve_button == event.button())
+                    
+                    if self.curve_drawing and time_diff < 300 and same_button and len(self.curve_points) >= 2:
+                        # 双击相同按钮完成曲线
+                        self.finish_curve()
+                        return
+                    
+                    # 单击添加控制点
+                    if not self.curve_drawing:
+                        # 第一次点击，开始绘制
+                        self.curve_drawing = True
+                        self.curve_points = [event.pos()]
+                        self.temp_image = self.image.copy()  # 保存预览图像
+                        self.curve_button = event.button()  # 记录按钮（左键=前景色，右键=背景色）
+                    else:
+                        # 检查是否切换了按钮（从左键切换到右键或相反）
+                        if self.curve_button != event.button():
+                            # 切换了按钮，取消当前曲线绘制
+                            self.cancel_curve()
+                            # 开始新的曲线绘制
+                            self.curve_drawing = True
+                            self.curve_points = [event.pos()]
+                            self.temp_image = self.image.copy()
+                            self.curve_button = event.button()
+                        else:
+                            # 同一个按钮，添加控制点到现有曲线
+                            self.curve_points.append(event.pos())
+                    
+                    self._last_curve_click_time = current_time
+                    self.update()
+                    return
+            
             # 如果没有点击控制点和选区，则进行正常的绘图操作
+            
+            # 如果在文字模式下点击画布，检查是否点击在文字输入框外
+            if self.is_text_mode and self.text_input_widget:
+                # 检查点击位置是否在文字输入框内
+                input_widget_rect = self.text_input_widget.geometry()
+                if not input_widget_rect.contains(event.pos()):
+                    # 点击在输入框外，提交文字
+                    self.finish_text_input()
+                    # 如果当前工具不是文字工具，继续处理当前工具的绘制
+                    if self.current_tool != "text":
+                        pass  # 继续往下执行
+                    else:
+                        # 如果还是文字工具，则不继续（避免立即创建新输入框）
+                        return
+            
             self.drawing = True
             self.last_point = event.pos()
             self.start_point = event.pos()
@@ -1995,15 +2588,69 @@ class PaintCanvas(QWidget):
             
             # 文字工具
             if self.current_tool == "text":
+                # 如果已经处于文字模式，先完成当前输入
+                if self.is_text_mode and self.text_input_widget:
+                    self.finish_text_input()
+                
+                # 开始新的文字输入
                 self.is_text_mode = True
                 self.text_start_point = event.pos()
                 self.text_content = ""
                 # 根据鼠标按钮设置文字颜色
                 self.pen_color = draw_color
-                # 显示文字工具栏
+                
+                # 显示文字工具栏（如果还没创建）
                 if not self.text_tool_dialog:
                     self.text_tool_dialog = TextToolDialog()
+                    # 连接字体变化信号到文字输入框更新
+                    self.text_tool_dialog.font_changed.connect(self.update_text_input_font)
+                    # 连接对话框关闭信号，更新菜单状态
+                    if hasattr(self, 'parent') and hasattr(self.parent(), 'on_text_toolbar_closed'):
+                        self.text_tool_dialog.finished.connect(self.parent().on_text_toolbar_closed)
+                    # 连接对话框销毁信号，确保清理引用
+                    self.text_tool_dialog.destroyed.connect(self.on_text_toolbar_destroyed)
+                
+                # 显示工具栏
                 self.text_tool_dialog.show()
+                # 确保菜单项为选中状态（带钩）
+                if hasattr(self, 'parent') and hasattr(self.parent(), 'text_toolbar_action'):
+                    self.parent().text_toolbar_action.setChecked(True)
+                
+                # 创建文字输入框
+                if self.text_input_widget:
+                    self.text_input_widget.hide()
+                    self.text_input_widget.deleteLater()
+                    self.text_input_widget = None
+                
+                # 创建新的文字输入框
+                self.text_input_widget = TextInputWidget(self, event.pos())
+                self.text_input_widget.move(event.pos())
+                
+                # 应用当前字体到文字输入框
+                if self.text_tool_dialog:
+                    current_font = self.text_tool_dialog.get_font()
+                    self.text_input_widget.setFont(current_font)
+                    self.text_font = current_font  # 同步更新存储的字体
+                else:
+                    self.text_input_widget.setFont(self.text_font)
+                
+                # 移除双向绑定，避免循环信号问题
+                # 只保留工具栏到输入框的单向同步
+                # 这样可以避免：setFont -> selection_font_changed -> set_font_from_widget -> on_font_changed 的循环
+                    # 立即同步一次，确保工具栏显示正确的状态
+                    QTimer.singleShot(0, lambda: self.text_tool_dialog.set_font_from_widget(
+                        self.text_input_widget.font()) if self.text_input_widget else None)
+                
+                self.text_input_widget.show()
+                
+                # 设置焦点到文字输入框
+                self.text_input_widget.setFocus()
+                
+                # 连接输入框的完成信号
+                self.text_input_widget.returnPressed.connect(self.finish_text_input)
+                # 确保输入框能获得焦点
+                self.text_input_widget.setFocus()
+                
                 self.update()
             
             # 矩形选取工具（只有在当前工具是select时才建立新选区）
@@ -2228,6 +2875,11 @@ class PaintCanvas(QWidget):
                 # 多边形绘制工具 - 记录鼠标位置并触发重绘
                 self._last_mouse_pos = event.pos()
                 self.update()
+            
+            elif self.current_tool == "curve":
+                # 曲线绘制工具 - 记录鼠标位置并触发重绘
+                self._last_mouse_pos = event.pos()
+                self.update()
                 
             elif self.current_tool in ["line", "rectangle", "ellipse", "rounded"]:
                 # 形状工具 - 显示预览
@@ -2316,7 +2968,94 @@ class PaintCanvas(QWidget):
                 
             self.drawing = False
             self.temp_image = None
-            self.is_text_mode = False
+            # 文字模式不在此结束，而是在finish_text_input中处理
+    
+    def finish_text_input(self):
+        """完成文字输入 - 简化版"""
+        if not self.text_input_widget:
+            return
+            
+        text = self.text_input_widget.text().strip()
+        if text:
+            # 获取当前字体
+            if self.text_tool_dialog:
+                current_font = self.text_tool_dialog.get_font()
+            else:
+                current_font = self.text_font
+            
+            # 绘制文字到画布 - 修复位置对齐问题
+            painter = QPainter(self.image)
+            painter.setPen(QPen(self.pen_color, 1))
+            painter.setFont(current_font)
+            
+            # 获取字体度量信息，用于精确位置计算
+            font_metrics = painter.fontMetrics()
+            
+            # 计算正确的绘制位置
+            # QLineEdit的文字显示位置 vs drawText的基线位置需要精确对齐
+            # 方法：使用ascent()来对齐文字的顶部
+            draw_pos = QPoint(self.text_start_point.x(),
+                             self.text_start_point.y() + font_metrics.ascent())
+            
+            # 使用更精确的文本绘制
+            painter.drawText(draw_pos, text)
+            painter.end()
+            self.update()
+            self.mark_content_modified()
+        
+        # 清理输入框
+        if self.text_input_widget:
+            self.text_input_widget.hide()
+            self.text_input_widget.deleteLater()
+            self.text_input_widget = None
+        self.is_text_mode = False
+        self.text_content = ""
+    
+    def on_text_toolbar_destroyed(self):
+        """文字工具栏销毁时的处理"""
+        # 清理对话框引用
+        self.text_tool_dialog = None
+        # 更新菜单状态为未选中
+        if hasattr(self, 'parent') and hasattr(self.parent(), 'text_toolbar_action'):
+            self.parent().text_toolbar_action.setChecked(False)
+    
+    def on_text_input_moved(self, new_pos):
+        """文字输入框位置变化时的处理"""
+        # 更新文字起始位置，确保提交时在正确的位置
+        self.text_start_point = new_pos
+        print(f"文字输入框移动到: {new_pos}")
+        
+    def update_text_input_font(self, font):
+        """更新文字输入框的字体 - 增强焦点和文字管理"""
+        self.text_font = font
+        if self.text_input_widget:
+            # 保存当前状态
+            current_text = self.text_input_widget.text()
+            cursor_pos = self.text_input_widget.cursorPosition()
+            current_pos = self.text_input_widget.pos()
+            has_focus = self.text_input_widget.hasFocus()
+            
+            # 应用新字体 - 这会触发setFont方法自动调整大小
+            self.text_input_widget.setFont(font)
+            
+            # 确保文字内容保持不变（重要：这也会更新文字大小）
+            if current_text:
+                self.text_input_widget.setText(current_text)
+                self.text_input_widget.setCursorPosition(min(cursor_pos, len(current_text)))
+            
+            # 确保位置正确
+            self.text_input_widget.move(current_pos)
+            
+            # 强制保持焦点 - 使用延迟确保焦点不被抢夺
+            if has_focus:
+                QTimer.singleShot(0, lambda: self.text_input_widget and self.text_input_widget.setFocus())
+            
+            # 强制立即更新显示
+            self.text_input_widget.update()
+            self.text_input_widget.repaint()
+            
+            # 确保父画布也更新
+            self.update()
     
     def spray_paint(self):
         """喷枪效果 - 在当前位置随机喷洒颜色点"""
@@ -2374,7 +3113,30 @@ class PaintCanvas(QWidget):
         # 切换工具时停止喷枪定时器
         if self.current_tool == "airbrush":
             self.airbrush_timer.stop()
+            
+        # 切换工具时完成文字输入（如果有）
+        if self.is_text_mode and self.text_input_widget:
+            self.finish_text_input()
+        
         self.current_tool = tool
+        
+        # 切换非文字工具时隐藏文字工具栏
+        if tool != "text" and self.text_tool_dialog:
+            self.text_tool_dialog.hide()
+        
+        # 更新文字工具栏菜单状态
+        if hasattr(self, 'text_toolbar_action'):
+            if tool == "text":
+                # 文字工具时，菜单项可用
+                self.text_toolbar_action.setEnabled(True)
+                if self.text_tool_dialog and self.text_tool_dialog.isVisible():
+                    self.text_toolbar_action.setChecked(True)
+                else:
+                    self.text_toolbar_action.setChecked(False)
+            else:
+                # 非文字工具时，菜单项灰色不可用且不带对勾
+                self.text_toolbar_action.setEnabled(False)
+                self.text_toolbar_action.setChecked(False)
     
     def set_pen_width(self, width):
         self.pen_width = width
@@ -2394,23 +3156,47 @@ class PaintCanvas(QWidget):
     def draw_shape(self, painter, start, end):
         """绘制各种形状"""
         if self.current_tool == "line":
-            # 直线
+            # 直线（不受填充模式影响）
             painter.drawLine(start, end)
             
         elif self.current_tool == "rectangle":
             # 矩形
             rect = QRect(start, end).normalized()
-            painter.drawRect(rect)
+            self.draw_shape_with_fill_mode(painter, lambda p: p.drawRect(rect))
             
         elif self.current_tool == "ellipse":
             # 椭圆
             rect = QRect(start, end).normalized()
-            painter.drawEllipse(rect)
+            self.draw_shape_with_fill_mode(painter, lambda p: p.drawEllipse(rect))
             
         elif self.current_tool == "rounded":
             # 圆角矩形
             rect = QRect(start, end).normalized()
-            painter.drawRoundedRect(rect, 20, 20)
+            self.draw_shape_with_fill_mode(painter, lambda p: p.drawRoundedRect(rect, 20, 20))
+    
+    def draw_shape_with_fill_mode(self, painter, draw_func):
+        """根据填充模式绘制形状"""
+        # 保存原始的画笔和画刷
+        original_pen = painter.pen()
+        original_brush = painter.brush()
+        
+        if self.shape_fill_mode == "outline":
+            # 模式1: 只有边框
+            painter.setBrush(Qt.NoBrush)
+            draw_func(painter)
+        elif self.shape_fill_mode == "filled":
+            # 模式2: 边框+填充（边框用当前颜色，填充用背景色）
+            painter.setBrush(QBrush(self.bg_color))
+            draw_func(painter)
+        elif self.shape_fill_mode == "fill_only":
+            # 模式3: 只有填充无边框（填充用当前颜色）
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(original_pen.color()))
+            draw_func(painter)
+        
+        # 恢复原始的画笔和画刷
+        painter.setPen(original_pen)
+        painter.setBrush(original_brush)
     
     def flood_fill(self, pos):
         """填充工具 - 简单的颜色填充"""
@@ -2793,6 +3579,47 @@ class PaintCanvas(QWidget):
         self.update()
         self.mark_content_modified()
 
+    def invert_colors(self):
+        """反色功能：如果没有选区，反色整个画布；如果有选区，只反色选区内容"""
+        # 检查是否有活动的矩形选区
+        if self.selection_active and self.selection_content is not None:
+            # 反色矩形选区内容
+            img = self.selection_content.toImage()
+            for x in range(img.width()):
+                for y in range(img.height()):
+                    color = img.pixelColor(x, y)
+                    inverted_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+                    img.setPixelColor(x, y, inverted_color)
+            self.selection_content = QPixmap.fromImage(img)
+            self.update()
+            self.mark_content_modified()
+            return
+        
+        # 检查是否有活动的任意形状选区
+        if self.crop_selection_active and self.crop_selection_content is not None:
+            # 反色任意形状选区内容
+            img = self.crop_selection_content.toImage()
+            for x in range(img.width()):
+                for y in range(img.height()):
+                    color = img.pixelColor(x, y)
+                    inverted_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+                    img.setPixelColor(x, y, inverted_color)
+            self.crop_selection_content = QPixmap.fromImage(img)
+            self.update()
+            self.mark_content_modified()
+            return
+        
+        # 没有选区，反色整个画布
+        img = self.image.toImage()
+        for x in range(img.width()):
+            for y in range(img.height()):
+                color = img.pixelColor(x, y)
+                inverted_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+                img.setPixelColor(x, y, inverted_color)
+        self.image = QPixmap.fromImage(img)
+        self.update()
+        self.mark_content_modified()
+
 
 class MSPaintWindow(QMainWindow):
     """主窗口"""
@@ -2951,6 +3778,12 @@ class MSPaintWindow(QMainWindow):
         # 加载AI设置（从配置文件或默认值）
         self.ai_settings = self.load_ai_config()
         
+        # 初始化文件操作相关属性
+        self.current_file_path = None  # 当前文件路径
+        
+        # 初始化文字工具对话框
+        self.text_tool_dialog = None
+        
         # 先初始化画布（在创建菜单栏之前）
         self.canvas = PaintCanvas()
         
@@ -2965,7 +3798,7 @@ class MSPaintWindow(QMainWindow):
         main_layout.setSpacing(0)
         
         # 左侧工具栏
-        self.create_toolbox(main_layout)
+        self.toolbox_widget = self.create_toolbox(main_layout)
         
         # 中间区域（画布 + 颜色选择 + 状态栏）
         middle_widget = QWidget()
@@ -2981,21 +3814,35 @@ class MSPaintWindow(QMainWindow):
         middle_layout.addWidget(scroll_area, stretch=1)
         
         # 颜色选择器和笔刷设置
-        self.create_color_palette_and_brush(middle_layout)
+        self.color_palette_widget = self.create_color_palette_and_brush(middle_layout)
         
         # 状态栏
-        status_bar = QStatusBar()
-        status_bar.showMessage('按住 Shift 键并拖动"帮助"来查找主题。单击"帮助主题"。')
-        status_bar.setStyleSheet("background-color: #D4D0C8; color: black;")
-        middle_layout.addWidget(status_bar)
+        self.status_bar = QStatusBar()
+        self.status_bar.showMessage('按住 Shift 键并拖动"帮助"来查找主题。单击"帮助主题"。')
+        self.status_bar.setStyleSheet("background-color: #D4D0C8; color: black;")
+        middle_layout.addWidget(self.status_bar)
         
         main_layout.addWidget(middle_widget, stretch=1)
         
         # 设置窗口关闭事件处理
         self.setAttribute(Qt.WA_DeleteOnClose)
+        
+        # 创建定时器来同步文字工具栏菜单状态
+        self.text_toolbar_sync_timer = QTimer()
+        self.text_toolbar_sync_timer.timeout.connect(self.sync_text_toolbar_menu_state)
+        self.text_toolbar_sync_timer.start(500)  # 每500毫秒同步一次
     
     def closeEvent(self, event):
         """窗口关闭事件处理"""
+        # 先完成文字输入（如果有）
+        if self.canvas.is_text_mode:
+            self.canvas.finish_text_input()
+        
+        # 关闭文字工具栏
+        if self.canvas.text_tool_dialog:
+            self.canvas.text_tool_dialog.close()
+            self.canvas.text_tool_dialog = None
+        
         if self.canvas.is_content_modified():
             reply = QMessageBox.question(
                 self,
@@ -3066,6 +3913,127 @@ class MSPaintWindow(QMainWindow):
             self.statusBar().showMessage("已粘贴剪贴板内容", 2000)
         else:
             QMessageBox.information(self, "提示", "剪贴板中没有图像内容")
+    
+    def select_all(self):
+        """全选 - 建立与当前画布一样大的选区"""
+        if self.canvas.image.isNull():
+            QMessageBox.information(self, "提示", "画布为空，无法建立选区")
+            return
+        
+        # 创建覆盖整个画布的选区
+        self.canvas.selection_rect = QRect(0, 0, self.canvas.image.width(), self.canvas.image.height())
+        self.canvas.selection_content = self.canvas.image.copy(self.canvas.selection_rect)
+        self.canvas.selection_active = True
+        self.canvas.update()
+        self.statusBar().showMessage("已选择整个画布", 2000)
+    
+    def clear_selection_area(self):
+        """清除选区内的内容"""
+        if not self.canvas.selection_active:
+            QMessageBox.information(self, "提示", "没有活动的选区")
+            return
+        
+        # 清除选区内的内容（用背景色填充）
+        painter = QPainter(self.canvas.image)
+        painter.setBrush(self.canvas.bg_color)
+        painter.setPen(Qt.NoPen)
+        painter.drawRect(self.canvas.selection_rect)
+        painter.end()
+        
+        # 清除选区状态
+        self.canvas.clear_selection()
+        self.canvas.mark_content_modified()
+        self.canvas.update()
+        self.statusBar().showMessage("已清除选区内容", 2000)
+    
+    def print_image(self):
+        """打印当前图像"""
+        if self.canvas.image.isNull():
+            QMessageBox.information(self, "提示", "没有可打印的图像")
+            return
+        
+        printer = QPrinter(QPrinter.HighResolution)
+        printer.setPageSize(QPrinter.A4)
+        printer.setOrientation(QPrinter.Portrait)
+        
+        print_dialog = QPrintDialog(printer, self)
+        if print_dialog.exec_() == QPrintDialog.Accepted:
+            try:
+                painter = QPainter(printer)
+                painter.setRenderHint(QPainter.Antialiasing)
+                
+                # 获取打印机的页面矩形
+                page_rect = printer.pageRect()
+                
+                # 获取图像尺寸
+                image_size = self.canvas.image.size()
+                
+                # 计算缩放比例，使图像适应页面，保持宽高比
+                scale_x = page_rect.width() / image_size.width()
+                scale_y = page_rect.height() / image_size.height()
+                scale = min(scale_x, scale_y)
+                
+                # 计算居中位置
+                scaled_width = int(image_size.width() * scale)
+                scaled_height = int(image_size.height() * scale)
+                x = (page_rect.width() - scaled_width) // 2
+                y = (page_rect.height() - scaled_height) // 2
+                
+                # 绘制图像
+                painter.drawPixmap(x, y, scaled_width, scaled_height, self.canvas.image)
+                painter.end()
+                
+                self.statusBar().showMessage("打印完成", 2000)
+            except Exception as e:
+                QMessageBox.critical(self, "打印错误", f"打印失败：{str(e)}")
+    
+    def print_preview(self):
+        """打印预览"""
+        if self.canvas.image.isNull():
+            QMessageBox.information(self, "提示", "没有可预览的图像")
+            return
+        
+        printer = QPrinter(QPrinter.HighResolution)
+        printer.setPageSize(QPrinter.A4)
+        printer.setOrientation(QPrinter.Portrait)
+        
+        preview_dialog = QPrintPreviewDialog(printer, self)
+        preview_dialog.setWindowTitle("打印预览")
+        preview_dialog.setWindowState(Qt.WindowMaximized)
+        
+        # 连接预览对话框的paintRequested信号
+        preview_dialog.paintRequested.connect(lambda: self.handle_print_preview(printer))
+        
+        preview_dialog.exec_()
+    
+    def handle_print_preview(self, printer):
+        """处理打印预览的绘制"""
+        try:
+            painter = QPainter(printer)
+            painter.setRenderHint(QPainter.Antialiasing)
+            
+            # 获取打印机的页面矩形
+            page_rect = printer.pageRect()
+            
+            # 获取图像尺寸
+            image_size = self.canvas.image.size()
+            
+            # 计算缩放比例，使图像适应页面，保持宽高比
+            scale_x = page_rect.width() / image_size.width()
+            scale_y = page_rect.height() / image_size.height()
+            scale = min(scale_x, scale_y)
+            
+            # 计算居中位置
+            scaled_width = int(image_size.width() * scale)
+            scaled_height = int(image_size.height() * scale)
+            x = (page_rect.width() - scaled_width) // 2
+            y = (page_rect.height() - scaled_height) // 2
+            
+            # 绘制图像
+            painter.drawPixmap(x, y, scaled_width, scaled_height, self.canvas.image)
+            painter.end()
+        except Exception as e:
+            QMessageBox.critical(self, "预览错误", f"预览失败：{str(e)}")
         
     def create_menu_bar(self):
         """创建菜单栏"""
@@ -3084,18 +4052,28 @@ class MSPaintWindow(QMainWindow):
         
         # 文件菜单
         file_menu = menubar.addMenu("文件(&F)")
-        file_menu.addAction("新建")
-        file_menu.addAction("打开")
-        file_menu.addAction("保存")
-        file_menu.addAction("另存为")
+        new_action = file_menu.addAction("新建")
+        new_action.triggered.connect(self.new_file)
+        
+        open_action = file_menu.addAction("打开")
+        open_action.triggered.connect(self.open_file)
+        
+        save_action = file_menu.addAction("保存")
+        save_action.triggered.connect(self.save_file)
+        
+        save_as_action = file_menu.addAction("另存为")
+        save_as_action.triggered.connect(self.save_as_file)
         file_menu.addSeparator()
         self.ai_generate_action = file_menu.addAction("AI生成")
         self.ai_generate_action.triggered.connect(self.show_ai_generate_dialog)
         self.ai_setup_action = file_menu.addAction("AI设置")
         self.ai_setup_action.triggered.connect(self.show_ai_setup_dialog)
         file_menu.addSeparator()
-        file_menu.addAction("打印")
-        file_menu.addAction("预览")
+        print_action = file_menu.addAction("打印")
+        print_action.setShortcut("Ctrl+P")
+        print_action.triggered.connect(self.print_image)
+        print_preview_action = file_menu.addAction("打印预览")
+        print_preview_action.triggered.connect(self.print_preview)
         file_menu.addSeparator()
         file_menu.addAction("最近用文件")
         file_menu.addSeparator()
@@ -3122,18 +4100,45 @@ class MSPaintWindow(QMainWindow):
         paste_action.triggered.connect(self.edit_paste)
         
         edit_menu.addSeparator()
-        edit_menu.addAction("全选")
-        edit_menu.addAction("清空选区")
+        select_all_action = edit_menu.addAction("全选")
+        select_all_action.setShortcut("Ctrl+A")
+        select_all_action.triggered.connect(self.select_all)
+        
+        clear_selection_action = edit_menu.addAction("清空选区")
+        clear_selection_action.triggered.connect(self.clear_selection_area)
+        
         clear_action = edit_menu.addAction("清空画布")
         clear_action.triggered.connect(self.canvas.clear_canvas)
         
         # 查看菜单
         view_menu = menubar.addMenu("查看(&V)")
-        view_menu.addAction("工具箱")
-        view_menu.addAction("颜色盒")
-        view_menu.addAction("状态栏")
-        view_menu.addAction("文字工具栏")
-
+        
+        # 工具箱开关菜单项
+        self.toolbox_action = view_menu.addAction("工具箱")
+        self.toolbox_action.setCheckable(True)
+        self.toolbox_action.setChecked(True)
+        self.toolbox_action.triggered.connect(self.toggle_toolbox)
+        
+        # 颜色盒开关菜单项
+        self.color_palette_action = view_menu.addAction("颜色盒")
+        self.color_palette_action.setCheckable(True)
+        self.color_palette_action.setChecked(True)
+        self.color_palette_action.triggered.connect(self.toggle_color_palette)
+        
+        # 状态栏开关菜单项
+        self.status_bar_action = view_menu.addAction("状态栏")
+        self.status_bar_action.setCheckable(True)
+        self.status_bar_action.setChecked(True)
+        self.status_bar_action.triggered.connect(self.toggle_status_bar)
+        
+        # 文字工具栏开关菜单项
+        self.text_toolbar_action = view_menu.addAction("文字工具栏")
+        self.text_toolbar_action.setCheckable(True)
+        self.text_toolbar_action.setChecked(False)
+        self.text_toolbar_action.triggered.connect(self.toggle_text_toolbar)
+        
+        # 初始状态：文字工具栏菜单项始终可用
+        self.text_toolbar_action.setEnabled(True)
 
         
         # 图像菜单
@@ -3147,7 +4152,8 @@ class MSPaintWindow(QMainWindow):
         stretch_skew_action = image_menu.addAction("拉伸/扭曲")
         stretch_skew_action.triggered.connect(self.show_stretch_skew_dialog)
         
-        image_menu.addAction("反色")
+        invert_colors_action = image_menu.addAction("反色")
+        invert_colors_action.triggered.connect(self.invert_colors)
 
         # 图像属性菜单项
         properties_action = image_menu.addAction("属性")
@@ -3155,7 +4161,8 @@ class MSPaintWindow(QMainWindow):
         
         # 颜色菜单
         color_menu = menubar.addMenu("颜色(&C)")
-        color_menu.addAction("编辑颜色")
+        edit_colors_action = color_menu.addAction("编辑颜色(&E)...")
+        edit_colors_action.triggered.connect(self.edit_colors)
         
         # 帮助菜单
         help_menu = menubar.addMenu("帮助(&H)")
@@ -3234,9 +4241,74 @@ class MSPaintWindow(QMainWindow):
             tools_grid.addWidget(btn, i // 2, i % 2)
         
         toolbox_layout.addLayout(tools_grid)
+        
+        # 添加填充模式选择器
+        mode_label = QLabel(":")
+        mode_label.setStyleSheet("color: black; font-size: 9px;")
+        toolbox_layout.addWidget(mode_label)
+        
+        # 创建三个模式按钮
+        mode_widget = QWidget()
+        mode_layout = QVBoxLayout(mode_widget)
+        mode_layout.setContentsMargins(2, 2, 2, 2)
+        mode_layout.setSpacing(2)
+        
+        mode_button_style = """
+            QPushButton {
+                background-color: #D4D0C8;
+                border: 1px solid #808080;
+                min-width: 48px;
+                max-width: 48px;
+                min-height: 20px;
+                max-height: 20px;
+            }
+            QPushButton:hover {
+                background-color: #E8E5D8;
+            }
+            QPushButton:checked {
+                background-color: #C0C0C0;
+                border: 2px inset #404040;
+            }
+        """
+        
+        self.mode_buttons = []
+        
+        # 模式1: 只有边框
+        mode1_btn = QPushButton()
+        mode1_btn.setIcon(self.create_mode_icon("outline"))
+        mode1_btn.setToolTip("仅边框")
+        mode1_btn.setCheckable(True)
+        mode1_btn.setChecked(True)  # 默认选中
+        mode1_btn.setStyleSheet(mode_button_style)
+        mode1_btn.clicked.connect(lambda: self.set_fill_mode("outline", mode1_btn))
+        mode_layout.addWidget(mode1_btn)
+        self.mode_buttons.append(mode1_btn)
+        
+        # 模式2: 边框加填充
+        mode2_btn = QPushButton()
+        mode2_btn.setIcon(self.create_mode_icon("filled"))
+        mode2_btn.setToolTip("边框+填充")
+        mode2_btn.setCheckable(True)
+        mode2_btn.setStyleSheet(mode_button_style)
+        mode2_btn.clicked.connect(lambda: self.set_fill_mode("filled", mode2_btn))
+        mode_layout.addWidget(mode2_btn)
+        self.mode_buttons.append(mode2_btn)
+        
+        # 模式3: 只有填充
+        mode3_btn = QPushButton()
+        mode3_btn.setIcon(self.create_mode_icon("fill_only"))
+        mode3_btn.setToolTip("仅填充")
+        mode3_btn.setCheckable(True)
+        mode3_btn.setStyleSheet(mode_button_style)
+        mode3_btn.clicked.connect(lambda: self.set_fill_mode("fill_only", mode3_btn))
+        mode_layout.addWidget(mode3_btn)
+        self.mode_buttons.append(mode3_btn)
+        
+        toolbox_layout.addWidget(mode_widget)
         toolbox_layout.addStretch()
         
         main_layout.addWidget(toolbox)
+        return toolbox
     
     def create_icon(self, tool_name):
         """根据工具名称创建图标"""
@@ -3269,9 +4341,55 @@ class MSPaintWindow(QMainWindow):
         # 如果找不到图标，返回一个空图标
         return QIcon()
     
+    def create_mode_icon(self, mode):
+        """创建填充模式图标"""
+        # 创建一个20x20的图标
+        pixmap = QPixmap(20, 20)
+        pixmap.fill(Qt.transparent)
+        
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        if mode == "outline":
+            # 只有边框 - 空心矩形
+            painter.setPen(QPen(Qt.black, 2))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(2, 2, 16, 16)
+        elif mode == "filled":
+            # 边框+填充 - 实心矩形带边框
+            painter.setPen(QPen(Qt.black, 2))
+            painter.setBrush(QBrush(QColor(128, 128, 128)))
+            painter.drawRect(2, 2, 16, 16)
+        elif mode == "fill_only":
+            # 只有填充 - 实心矩形无边框
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(QColor(128, 128, 128)))
+            painter.drawRect(2, 2, 16, 16)
+        
+        painter.end()
+        return QIcon(pixmap)
+    
+    def set_fill_mode(self, mode, button):
+        """设置填充模式"""
+        # 取消其他按钮的选中状态
+        for btn in self.mode_buttons:
+            if btn != button:
+                btn.setChecked(False)
+        
+        # 确保当前按钮保持选中状态
+        button.setChecked(True)
+        
+        # 设置画布的填充模式
+        self.canvas.shape_fill_mode = mode
+        
+        # 对于多边形工具，同步设置多边形填充模式
+        if hasattr(self.canvas, 'polygon_fill_mode'):
+            self.canvas.polygon_fill_mode = mode
+    
     def create_color_palette_and_brush(self, parent_layout):
         """创建颜色选择器和笔刷设置"""
         color_widget = QWidget()
+        self.color_palette_widget = color_widget  # 保存引用
         color_widget.setFixedHeight(110)  # 增加高度以适应两排颜色
         color_widget.setStyleSheet("background-color: #D4D0C8;")
         
@@ -3394,6 +4512,7 @@ class MSPaintWindow(QMainWindow):
         color_layout.addStretch()
         
         parent_layout.addWidget(color_widget)
+        return color_widget
     
     def create_color_button(self, color, index):
         """创建颜色按钮"""
@@ -3478,6 +4597,18 @@ class MSPaintWindow(QMainWindow):
             
             # 应用新尺寸到画布
             self.resize_canvas(new_width, new_height)
+    
+    def edit_colors(self):
+        """编辑颜色 - 打开系统颜色编辑对话框"""
+        # 获取当前前景色
+        current_color = self.canvas.pen_color
+        
+        # 打开系统颜色对话框
+        color = QColorDialog.getColor(current_color, self, "编辑颜色")
+        
+        # 如果用户选择了有效颜色，则更新前景色
+        if color.isValid():
+            self.change_fg_color(color.name())
     
     def resize_canvas(self, width, height):
         """调整画布大小"""
@@ -3594,6 +4725,215 @@ class MSPaintWindow(QMainWindow):
             
         except Exception as e:
             QMessageBox.critical(self, "错误", f"应用AI图像失败: {str(e)}")
+    
+    def toggle_toolbox(self):
+        """切换工具箱显示/隐藏"""
+        if self.toolbox_action.isChecked():
+            self.toolbox_widget.show()
+        else:
+            self.toolbox_widget.hide()
+    
+    def toggle_color_palette(self):
+        """切换颜色盒显示/隐藏"""
+        if self.color_palette_action.isChecked():
+            self.color_palette_widget.show()
+        else:
+            self.color_palette_widget.hide()
+    
+    def toggle_status_bar(self):
+        """切换状态栏显示/隐藏"""
+        if self.status_bar_action.isChecked():
+            self.status_bar.show()
+        else:
+            self.status_bar.hide()
+    
+    def toggle_text_toolbar(self):
+        """切换文字工具栏显示/隐藏"""
+        # 只有在文字工具时才允许切换，否则忽略点击
+        if self.canvas.current_tool != "text":
+            # 非文字工具状态下，强制保持未选中状态并返回
+            self.text_toolbar_action.setChecked(False)
+            return
+            
+        if self.text_toolbar_action.isChecked():
+            # 显示文字工具栏
+            if not self.canvas.text_tool_dialog:
+                self.canvas.text_tool_dialog = TextToolDialog()
+                # 连接对话框关闭信号，更新菜单状态
+                self.canvas.text_tool_dialog.finished.connect(self.on_text_toolbar_closed)
+            self.canvas.text_tool_dialog.show()
+            # 确保菜单项为选中状态（带钩）
+            self.text_toolbar_action.setChecked(True)
+        else:
+            # 隐藏文字工具栏
+            if self.canvas.text_tool_dialog:
+                self.canvas.text_tool_dialog.hide()
+    
+    def on_text_toolbar_closed(self):
+        """文字工具栏关闭时的处理"""
+        # 更新菜单状态为未选中
+        self.text_toolbar_action.setChecked(False)
+        # 清理对话框引用
+        self.canvas.text_tool_dialog = None
+    
+    def sync_text_toolbar_menu_state(self):
+        """同步文字工具栏菜单状态与对话框实际存在状态"""
+        if self.canvas.current_tool == "text":
+            # 文字工具时，菜单项可用
+            self.text_toolbar_action.setEnabled(True)
+            # 同步对话框存在状态与菜单选中状态
+            dialog_exists = (self.canvas.text_tool_dialog is not None and
+                           self.canvas.text_tool_dialog.isVisible())
+            menu_checked = self.text_toolbar_action.isChecked()
+            
+            # 如果对话框存在状态与菜单选中状态不一致，进行同步
+            if dialog_exists != menu_checked:
+                self.text_toolbar_action.setChecked(dialog_exists)
+        else:
+            # 非文字工具时，菜单项灰色不可用且不带对勾
+            self.text_toolbar_action.setEnabled(False)
+            self.text_toolbar_action.setChecked(False)
+
+
+    def new_file(self):
+        """新建文件"""
+        # 检查是否有未保存的更改
+        if self.canvas.is_content_modified():
+            reply = QMessageBox.question(
+                self, "确认新建",
+                "当前有未保存的更改，是否保存？",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel
+            )
+            
+            if reply == QMessageBox.Save:
+                self.save_file()
+            elif reply == QMessageBox.Cancel:
+                return
+        
+        # 创建新的空白画布
+        self.canvas.image = QPixmap(720, 520)  # 默认尺寸
+        self.canvas.image.fill(Qt.white)
+        self.canvas.setFixedSize(720, 520)
+        self.canvas.update()
+        
+        # 重置文件路径和画布状态
+        self.current_file_path = None
+        self.canvas.reset_content_modified_flag()
+        self.statusBar().showMessage("新建文件")
+        
+        # 重置窗口标题为"未命名 - 画图"
+        self.setWindowTitle("未命名 - 画图")
+    
+    def open_file(self):
+        """打开文件"""
+        # 检查是否有未保存的更改
+        if self.canvas.is_content_modified():
+            reply = QMessageBox.question(
+                self, "确认打开",
+                "当前有未保存的更改，是否保存？",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel
+            )
+            
+            if reply == QMessageBox.Save:
+                self.save_file()
+            elif reply == QMessageBox.Cancel:
+                return
+        
+        # 打开文件对话框
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "打开图像", "",
+            "图像文件 (*.bmp *.jpg *.jpeg *.png *.gif *.tiff *.ico);;所有文件 (*.*)"
+        )
+        
+        if file_path:
+            try:
+                # 加载图像
+                image = QPixmap(file_path)
+                if image.isNull():
+                    QMessageBox.warning(self, "错误", "无法打开所选文件。")
+                    return
+                
+                # 应用到画布
+                self.canvas.image = image
+                self.canvas.setFixedSize(image.size())
+                self.canvas.update()
+                
+                # 更新文件路径和画布状态
+                self.current_file_path = file_path
+                self.canvas.reset_content_modified_flag()
+                self.statusBar().showMessage(f"已打开: {file_path}")
+                
+                # 更新窗口标题为文件名
+                file_name = os.path.basename(file_path)
+                self.setWindowTitle(f"{file_name} - 画图")
+                
+            except Exception as e:
+                QMessageBox.warning(self, "错误", f"打开文件失败: {str(e)}")
+    
+    def save_file(self):
+        """保存文件"""
+        if hasattr(self, 'current_file_path') and self.current_file_path:
+            # 如果已有文件路径，直接保存
+            try:
+                self.canvas.image.save(self.current_file_path)
+                self.canvas.reset_content_modified_flag()
+                self.statusBar().showMessage(f"已保存: {self.current_file_path}")
+                
+                # 更新窗口标题为文件名
+                file_name = os.path.basename(self.current_file_path)
+                self.setWindowTitle(f"{file_name} - 画图")
+                
+                return True
+            except Exception as e:
+                QMessageBox.warning(self, "错误", f"保存文件失败: {str(e)}")
+                return False
+        else:
+            # 否则执行"另存为"
+            return self.save_as_file()
+    
+    def save_as_file(self):
+        """另存为文件"""
+        file_path, selected_filter = QFileDialog.getSaveFileName(
+            self, "另存为", "",
+            "PNG 图像 (*.png);;JPEG 图像 (*.jpg *.jpeg);;BMP 图像 (*.bmp);;所有文件 (*.*)"
+        )
+        
+        if file_path:
+            try:
+                # 确保文件有正确的扩展名
+                if not file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
+                    # 根据选择的过滤器添加扩展名
+                    if "PNG" in selected_filter:
+                        file_path += ".png"
+                    elif "JPEG" in selected_filter:
+                        file_path += ".jpg"
+                    elif "BMP" in selected_filter:
+                        file_path += ".bmp"
+                
+                # 保存图像
+                if self.canvas.image.save(file_path):
+                    self.current_file_path = file_path
+                    self.canvas.reset_content_modified_flag()
+                    self.statusBar().showMessage(f"已保存: {file_path}")
+                    
+                    # 更新窗口标题为文件名
+                    file_name = os.path.basename(file_path)
+                    self.setWindowTitle(f"{file_name} - 画图")
+                    
+                    return True
+                else:
+                    QMessageBox.warning(self, "错误", "保存文件失败。")
+                    return False
+                    
+            except Exception as e:
+                QMessageBox.warning(self, "错误", f"保存文件失败: {str(e)}")
+                return False
+        
+        return False
+
+    def invert_colors(self):
+        """反色图像 - 调用画布的invert_colors方法"""
+        self.canvas.invert_colors()
 
 
 if __name__ == "__main__":
