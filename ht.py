@@ -1149,7 +1149,7 @@ class TextInputWidget(QLineEdit):
             QLineEdit {
                 border: 2px solid #316AC5;
                 border-radius: 3px;
-                background-color: white;
+                background-color: transparent;
                 padding: 4px;
                 selection-background-color: #316AC5;
                 selection-color: white;
@@ -1557,7 +1557,8 @@ class TextToolDialog(QDialog):
                 parent = self.parent()
                 if parent.text_input_widget and parent.text_input_widget.isVisible():
                     # 延迟一点点时间再设置焦点，避免抢夺
-                    QTimer.singleShot(10, lambda: parent.text_input_widget.setFocus())
+                    # 不再将焦点设置回文字输入框，避免干扰用户操作
+                    pass
 
 
 class PaintCanvas(QWidget):
@@ -1637,6 +1638,16 @@ class PaintCanvas(QWidget):
         self.resize_handle_size = 8  # 控制点大小
         self.original_image = None  # 原始图像副本，用于调整大小
         
+        # 缩放（放大镜工具，仅影响显示，不改变画布内容）
+        self.zoom_factor = 1.0       # 当前缩放倍率
+        self.zoom_levels = [0.2, 0.25, 1/3, 0.5, 1.0, 2.0, 3.0]  # 可用档位
+        self.zoom_index = 4          # 默认1.0在第4位
+
+        # 撤销/重做系统
+        self.undo_stack = []  # 撤销栈，存储QPixmap的深拷贝
+        self.redo_stack = []  # 重做栈
+        self.max_history = 5  # 最大历史记录数
+        
         # 画布内容变化跟踪
         self.content_modified = False
         self.original_content_hash = self._calculate_image_hash()
@@ -1655,6 +1666,103 @@ class PaintCanvas(QWidget):
         except:
             return ""
     
+    # ── 缩放辅助 ──────────────────────────────────────────────────
+    def _apply_zoom(self):
+        """根据当前 zoom_factor 调整 widget 的显示尺寸"""
+        w = int(self.image.width()  * self.zoom_factor)
+        h = int(self.image.height() * self.zoom_factor)
+        self.setFixedSize(w, h)
+        self.update()
+
+    def zoom_in(self, center=None):
+        """放大一档（最大3.0倍），center 为图像坐标点"""
+        if self.zoom_index < len(self.zoom_levels) - 1:
+            self.zoom_index += 1
+            self.zoom_factor = self.zoom_levels[self.zoom_index]
+            self._apply_zoom()
+            self._update_zoom_status()
+
+    def zoom_out(self, center=None):
+        """缩小一档（最小0.2倍），center 为图像坐标点"""
+        if self.zoom_index > 0:
+            self.zoom_index -= 1
+            self.zoom_factor = self.zoom_levels[self.zoom_index]
+            self._apply_zoom()
+            self._update_zoom_status()
+
+    def reset_zoom(self):
+        """还原为100%"""
+        self.zoom_index = 4
+        self.zoom_factor = 1.0
+        self._apply_zoom()
+        self._update_zoom_status()
+
+    def _update_zoom_status(self):
+        """向父窗口状态栏推送缩放信息"""
+        try:
+            pct = int(round(self.zoom_factor * 100))
+            self.parent().statusBar().showMessage(f"缩放: {pct}%")
+        except Exception:
+            pass
+
+    def _widget_to_image(self, pos):
+        """把 widget 坐标转换为图像坐标"""
+        if self.zoom_factor == 1.0:
+            return pos
+        x = int(pos.x() / self.zoom_factor)
+        y = int(pos.y() / self.zoom_factor)
+        return QPoint(x, y)
+
+    # ── 撤销/重做 ────────────────────────────────────────────────
+    def save_state(self):
+        """在操作执行前调用，将当前画布状态推入撤销栈"""
+        # 创建当前图像的深拷贝（操作前的快照）
+        image_copy = QPixmap(self.image)
+        
+        # 添加到撤销栈
+        self.undo_stack.append(image_copy)
+        
+        # 限制历史记录数量
+        if len(self.undo_stack) > self.max_history:
+            self.undo_stack.pop(0)
+        
+        # 每次新操作前清空重做栈（新操作会使重做历史失效）
+        self.redo_stack.clear()
+    
+    def undo(self):
+        """撤销操作"""
+        if not self.undo_stack:
+            return False
+        
+        # 将当前状态保存到重做栈
+        current_image = QPixmap(self.image)
+        self.redo_stack.append(current_image)
+        
+        # 从撤销栈恢复上一个状态
+        prev_image = self.undo_stack.pop()
+        self.image = QPixmap(prev_image)
+        
+        self.update()
+        self.mark_content_modified()
+        return True
+    
+    def redo(self):
+        """重做操作"""
+        if not self.redo_stack:
+            return False
+        
+        # 将当前状态保存到撤销栈
+        current_image = QPixmap(self.image)
+        self.undo_stack.append(current_image)
+        
+        # 从重做栈恢复下一个状态
+        next_image = self.redo_stack.pop()
+        self.image = QPixmap(next_image)
+        
+        self.update()
+        self.mark_content_modified()
+        return True
+
     def mark_content_modified(self):
         """标记画布内容为已修改"""
         self.content_modified = True
@@ -1706,8 +1814,8 @@ class PaintCanvas(QWidget):
             
             # 更新画布图像
             self.image = QPixmap.fromImage(new_image)
-            # 调整画布大小以匹配新图像
-            self.setFixedSize(self.image.width(), self.image.height())
+            # 调整画布组件尺寸以匹配新图像大小（保持当前缩放）
+            self._apply_zoom()
             self.mark_content_modified()
         
         # 清除裁剪状态
@@ -2217,6 +2325,11 @@ class PaintCanvas(QWidget):
         
     def paintEvent(self, event):
         painter = QPainter(self)
+
+        # 缩放变换：所有绘制都在缩放坐标系下进行
+        if self.zoom_factor != 1.0:
+            painter.scale(self.zoom_factor, self.zoom_factor)
+
         # 绘制图像（按原尺寸，不拉伸）
         painter.drawPixmap(0, 0, self.image)
         
@@ -2381,11 +2494,25 @@ class PaintCanvas(QWidget):
             painter.drawRect(corner_x, corner_y, handle_size, handle_size)
     
     def mousePressEvent(self, event):
+        # ── 放大镜工具：左键放大，右键缩小，不进入绘图流程 ──
+        if self.current_tool == "magnifier":
+            if event.button() == Qt.LeftButton:
+                self.zoom_in()
+            elif event.button() == Qt.RightButton:
+                self.zoom_out()
+            return
+
+        # ── 坐标转换：widget 坐标 → 图像坐标（缩放时使用）──
+        # 用一个代理事件位置，后续所有 event.pos() 都走此转换
+        _img_pos = self._widget_to_image(event.pos())
+        # 覆盖 event.pos，使后续所有代码透明地拿到图像坐标
+        event.pos = lambda: _img_pos
+
         # 如果正在文字模式，检查是否点击在输入框外，如果是则提交文字
         if self.is_text_mode and self.text_input_widget:
             # 获取输入框的全局位置
             widget_rect = QRect(self.text_input_widget.pos(), self.text_input_widget.size())
-            if not widget_rect.contains(event.pos()):
+            if not widget_rect.contains(_img_pos):
                 # 点击在输入框外，提交文字
                 self.finish_text_input()
                 # 如果是文字工具，继续处理（创建新的输入框）
@@ -2415,18 +2542,21 @@ class PaintCanvas(QWidget):
                 
                 pos = event.pos()
                 if right_rect.contains(pos):
+                    self.save_state()  # 操作前保存状态
                     self.resizing_mode = "right"
                     self.resizing_start_pos = pos
                     self.original_size = self.image.size()
                     self.original_image = self.image.copy()
                     return
                 elif bottom_rect.contains(pos):
+                    self.save_state()  # 操作前保存状态
                     self.resizing_mode = "bottom"
                     self.resizing_start_pos = pos
                     self.original_size = self.image.size()
                     self.original_image = self.image.copy()
                     return
                 elif corner_rect.contains(pos):
+                    self.save_state()  # 操作前保存状态
                     self.resizing_mode = "corner"
                     self.resizing_start_pos = pos
                     self.original_size = self.image.size()
@@ -2551,6 +2681,10 @@ class PaintCanvas(QWidget):
                         # 如果还是文字工具，则不继续（避免立即创建新输入框）
                         return
             
+            # 在操作前保存状态（排除纯预览/选区/取色器等不修改像素的工具）
+            if self.current_tool not in ["eyedropper", "select", "crop"]:
+                self.save_state()
+
             self.drawing = True
             self.last_point = event.pos()
             self.start_point = event.pos()
@@ -2643,13 +2777,14 @@ class PaintCanvas(QWidget):
                 
                 self.text_input_widget.show()
                 
-                # 设置焦点到文字输入框
-                self.text_input_widget.setFocus()
+                # 设置焦点到文字输入框 - 使用稍长的延迟确保正确设置
+                QTimer.singleShot(50, self.text_input_widget.setFocus)
+                
+                # 设置文字颜色为当前前景色
+                self.update_text_input_color(self.pen_color)
                 
                 # 连接输入框的完成信号
                 self.text_input_widget.returnPressed.connect(self.finish_text_input)
-                # 确保输入框能获得焦点
-                self.text_input_widget.setFocus()
                 
                 self.update()
             
@@ -2699,6 +2834,14 @@ class PaintCanvas(QWidget):
                 self.update()
     
     def mouseMoveEvent(self, event):
+        # 坐标转换：widget 坐标 → 图像坐标
+        _img_pos = self._widget_to_image(event.pos())
+        event.pos = lambda: _img_pos
+
+        # 放大镜工具：鼠标移动时不做绘图处理
+        if self.current_tool == "magnifier":
+            return
+
         # 处理画布调整大小 - 支持左右键
         if self.resizing_mode is not None and (event.buttons() & (Qt.LeftButton | Qt.RightButton)):
             if self.original_image is None:
@@ -2729,9 +2872,8 @@ class PaintCanvas(QWidget):
             painter.end()
             
             self.image = new_image
-            # 调整画布组件尺寸以匹配新图像大小
-            self.setFixedSize(new_width, new_height)
-            self.update()
+            # 调整画布组件尺寸以匹配新图像大小（保持当前缩放）
+            self._apply_zoom()
             self.mark_content_modified()
             return
         
@@ -2894,6 +3036,10 @@ class PaintCanvas(QWidget):
                 self.update()
             
     def mouseReleaseEvent(self, event):
+        # 坐标转换：widget 坐标 → 图像坐标
+        _img_pos = self._widget_to_image(event.pos())
+        event.pos = lambda: _img_pos
+
         if event.button() == Qt.LeftButton:
             # 结束画布调整大小
             if self.resizing_mode is not None:
@@ -2983,6 +3129,8 @@ class PaintCanvas(QWidget):
             else:
                 current_font = self.text_font
             
+            self.save_state()  # 操作前保存状态
+            
             # 绘制文字到画布 - 修复位置对齐问题
             painter = QPainter(self.image)
             painter.setPen(QPen(self.pen_color, 1))
@@ -2993,9 +3141,25 @@ class PaintCanvas(QWidget):
             
             # 计算正确的绘制位置
             # QLineEdit的文字显示位置 vs drawText的基线位置需要精确对齐
-            # 方法：使用ascent()来对齐文字的顶部
-            draw_pos = QPoint(self.text_start_point.x(),
-                             self.text_start_point.y() + font_metrics.ascent())
+            # 方法：使用更精确的计算方式来匹配QLineEdit的文本显示位置
+            
+            # QLineEdit的布局分析：
+            # 1. 边框: 2px (根据样式表设置)
+            # 2. 内边距: 4px (根据样式表设置)
+            # 3. 文本垂直居中显示
+            
+            border_width = 2  # 边框宽度
+            padding = 4       # 内边距
+            
+            # 获取字体度量信息
+            ascent = font_metrics.ascent()
+            
+            # 使用最简单的匹配方法：直接使用ascent值作为Y偏移
+            # 这是最接近QLineEdit中文本显示位置的方法
+            draw_pos = QPoint(
+                self.text_start_point.x() + border_width + padding,
+                self.text_start_point.y() + border_width + padding + ascent
+            )
             
             # 使用更精确的文本绘制
             painter.drawText(draw_pos, text)
@@ -3018,6 +3182,27 @@ class PaintCanvas(QWidget):
         # 更新菜单状态为未选中
         if hasattr(self, 'parent') and hasattr(self.parent(), 'text_toolbar_action'):
             self.parent().text_toolbar_action.setChecked(False)
+    
+    def update_text_input_color(self, color):
+        """更新文字输入框的文字颜色"""
+        if self.text_input_widget:
+            # 创建样式表，设置文字颜色
+            style = f"""
+                QLineEdit {{
+                    border: 2px solid #316AC5;
+                    border-radius: 3px;
+                    background-color: transparent;
+                    padding: 4px;
+                    color: {color.name()};  /* 设置文字颜色为前景色 */
+                    selection-background-color: #316AC5;
+                    selection-color: white;
+                }}
+                QLineEdit:focus {{
+                    border-color: #316AC5;
+                    outline: none;
+                }}
+            """
+            self.text_input_widget.setStyleSheet(style)
     
     def on_text_input_moved(self, new_pos):
         """文字输入框位置变化时的处理"""
@@ -3087,6 +3272,7 @@ class PaintCanvas(QWidget):
         self.mark_content_modified()
             
     def clear_canvas(self):
+        self.save_state()  # 操作前保存状态
         self.image.fill(Qt.white)
         self.update()
         self.mark_content_modified()
@@ -3119,7 +3305,13 @@ class PaintCanvas(QWidget):
             self.finish_text_input()
         
         self.current_tool = tool
-        
+
+        # 设置鼠标光标形状
+        if tool == "magnifier":
+            self.setCursor(Qt.CrossCursor)
+        else:
+            self.unsetCursor()
+
         # 切换非文字工具时隐藏文字工具栏
         if tool != "text" and self.text_tool_dialog:
             self.text_tool_dialog.hide()
@@ -3313,6 +3505,7 @@ class PaintCanvas(QWidget):
     
     def flip_image(self, direction):
         """翻转图像或选区"""
+        self.save_state()  # 操作前保存状态
         # 如果有活动的选区，只对选区内容进行翻转
         if self.selection_active and self.selection_content is not None:
             transform = QTransform()
@@ -3356,6 +3549,7 @@ class PaintCanvas(QWidget):
     
     def rotate_image(self, angle):
         """旋转图像或选区"""
+        self.save_state()  # 操作前保存状态
         # 如果有活动的选区，只对选区内容进行旋转
         if self.selection_active and self.selection_content is not None:
             # 创建变换矩阵
@@ -3453,14 +3647,15 @@ class PaintCanvas(QWidget):
             painter.end()
             
             self.image = new_image
-            # 更新画布组件尺寸以匹配新图像大小
-            self.setFixedSize(new_image.width(), new_image.height())
+            # 更新画布组件尺寸以匹配新图像大小（保持当前缩放）
+            self._apply_zoom()
         
         self.update()
         self.mark_content_modified()
     
     def stretch_image(self, horizontal_percent, vertical_percent):
         """拉伸图像或选区"""
+        self.save_state()  # 操作前保存状态
         # 如果有活动的选区，只对选区内容进行拉伸
         if self.selection_active and self.selection_content is not None:
             new_width = int(self.selection_content.width() * horizontal_percent / 100)
@@ -3495,6 +3690,7 @@ class PaintCanvas(QWidget):
     
     def skew_image(self, horizontal_angle, vertical_angle):
         """扭曲图像或选区"""
+        self.save_state()  # 操作前保存状态
         # 如果有活动的选区，只对选区内容进行扭曲
         if self.selection_active and self.selection_content is not None:
             transform = QTransform()
@@ -3581,6 +3777,7 @@ class PaintCanvas(QWidget):
 
     def invert_colors(self):
         """反色功能：如果没有选区，反色整个画布；如果有选区，只反色选区内容"""
+        self.save_state()  # 操作前保存状态
         # 检查是否有活动的矩形选区
         if self.selection_active and self.selection_content is not None:
             # 反色矩形选区内容
@@ -4082,8 +4279,17 @@ class MSPaintWindow(QMainWindow):
         
         # 编辑菜单
         edit_menu = menubar.addMenu("编辑(&E)")
-        edit_menu.addAction("撤销")
-        edit_menu.addAction("重做")
+        
+        # 撤销功能
+        self.undo_action = edit_menu.addAction("撤销")
+        self.undo_action.setShortcut("Ctrl+Z")
+        self.undo_action.triggered.connect(self.canvas.undo)
+        
+        # 重做功能
+        self.redo_action = edit_menu.addAction("重做")
+        self.redo_action.setShortcut("Ctrl+Y")
+        self.redo_action.triggered.connect(self.canvas.redo)
+        
         edit_menu.addSeparator()
         
         # 剪切复制粘贴功能
@@ -4242,16 +4448,40 @@ class MSPaintWindow(QMainWindow):
         
         toolbox_layout.addLayout(tools_grid)
         
+        # 添加撤销/重做按钮
+        undo_redo_widget = QWidget()
+        undo_redo_layout = QHBoxLayout(undo_redo_widget)
+        undo_redo_layout.setContentsMargins(2, 2, 2, 2)
+        undo_redo_layout.setSpacing(2)
+        
+        # 撤销按钮
+        self.undo_btn = QPushButton("↶")
+        self.undo_btn.setToolTip("撤销 (Ctrl+Z)")
+        self.undo_btn.setStyleSheet(tool_style)
+        self.undo_btn.clicked.connect(self.canvas.undo)
+        undo_redo_layout.addWidget(self.undo_btn)
+        
+        # 重做按钮
+        self.redo_btn = QPushButton("↷")
+        self.redo_btn.setToolTip("重做 (Ctrl+Y)")
+        self.redo_btn.setStyleSheet(tool_style)
+        self.redo_btn.clicked.connect(self.canvas.redo)
+        undo_redo_layout.addWidget(self.redo_btn)
+        
+        toolbox_layout.addWidget(undo_redo_widget)
+        
         # 添加填充模式选择器
         mode_label = QLabel(":")
         mode_label.setStyleSheet("color: black; font-size: 9px;")
         toolbox_layout.addWidget(mode_label)
+        self.mode_label = mode_label  # 保存引用
         
         # 创建三个模式按钮
         mode_widget = QWidget()
         mode_layout = QVBoxLayout(mode_widget)
         mode_layout.setContentsMargins(2, 2, 2, 2)
         mode_layout.setSpacing(2)
+        self.mode_widget = mode_widget  # 保存引用
         
         mode_button_style = """
             QPushButton {
@@ -4306,6 +4536,10 @@ class MSPaintWindow(QMainWindow):
         
         toolbox_layout.addWidget(mode_widget)
         toolbox_layout.addStretch()
+        
+        # 初始隐藏填充模式选择器（默认工具是铅笔，不需要填充模式）
+        mode_label.hide()
+        mode_widget.hide()
         
         main_layout.addWidget(toolbox)
         return toolbox
@@ -4568,6 +4802,15 @@ class MSPaintWindow(QMainWindow):
         else:
             # 如果取消选中，重新选中它（必须有一个工具被选中）
             button.setChecked(True)
+        
+        # 根据当前工具显示或隐藏填充模式选择器
+        if hasattr(self, 'mode_label') and hasattr(self, 'mode_widget'):
+            if tool_name in ["rectangle", "ellipse", "polygon", "rounded"]:
+                self.mode_label.show()
+                self.mode_widget.show()
+            else:
+                self.mode_label.hide()
+                self.mode_widget.hide()
     
     def change_fg_color(self, color_name):
         """改变前景颜色"""
@@ -4623,8 +4866,7 @@ class MSPaintWindow(QMainWindow):
         
         # 更新画布
         self.canvas.image = new_image
-        self.canvas.setFixedSize(width, height)
-        self.canvas.update()
+        self.canvas._apply_zoom()
     
     def show_stretch_skew_dialog(self):
         """显示拉伸和扭曲对话框"""
@@ -4813,8 +5055,7 @@ class MSPaintWindow(QMainWindow):
         # 创建新的空白画布
         self.canvas.image = QPixmap(720, 520)  # 默认尺寸
         self.canvas.image.fill(Qt.white)
-        self.canvas.setFixedSize(720, 520)
-        self.canvas.update()
+        self.canvas.reset_zoom()  # 重置缩放到100%
         
         # 重置文件路径和画布状态
         self.current_file_path = None
@@ -4855,8 +5096,7 @@ class MSPaintWindow(QMainWindow):
                 
                 # 应用到画布
                 self.canvas.image = image
-                self.canvas.setFixedSize(image.size())
-                self.canvas.update()
+                self.canvas.reset_zoom()  # 重置缩放到100%
                 
                 # 更新文件路径和画布状态
                 self.current_file_path = file_path
