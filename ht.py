@@ -711,6 +711,132 @@ class AISetupDialog(QDialog):
         }
 
 
+class AboutDonationDialog(QDialog):
+    """关于画图克隆 - 捐赠对话框"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("关于画图克隆 - 捐赠")
+        self.setFixedSize(550, 500)
+        self.setModal(True)
+        
+        # 创建布局
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+        
+        # 标题
+        title_label = QLabel("支持画图克隆作者 - 捐赠支持1元")
+        title_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #333;")
+        title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title_label)
+        
+        # 描述
+        description_label = QLabel(
+            "感谢您使用画图克隆！\n\n"
+            "如果您喜欢这个项目并希望支持作者持续开发其他项目，欢迎通过以下方式进行捐赠。\n"
+            "您的支持将帮助我们改进功能、修复错误并添加新特性。"
+        )
+        description_label.setWordWrap(True)
+        description_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(description_label)
+        
+        layout.addSpacing(20)
+        
+        # 二维码区域
+        qr_group = QGroupBox("扫码捐赠")
+        qr_layout = QHBoxLayout(qr_group)
+        qr_layout.setSpacing(30)
+        
+        # 微信二维码
+        wechat_widget = self.create_qr_widget("微信", "wechat_qr.png")
+        qr_layout.addWidget(wechat_widget)
+        
+        # 支付宝二维码
+        alipay_widget = self.create_qr_widget("支付宝", "alipay_qr.png")
+        qr_layout.addWidget(alipay_widget)
+        
+        layout.addWidget(qr_group)
+        
+        layout.addSpacing(20)
+        
+        # 贝宝捐赠按钮
+        paypal_label = QLabel("国际用户可通过贝宝(PayPal)捐赠：")
+        paypal_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(paypal_label)
+        
+        paypal_button = QPushButton("前往贝宝捐赠")
+        paypal_button.setStyleSheet("""
+            QPushButton {
+                background-color: #0070BA;
+                color: white;
+                font-weight: bold;
+                padding: 10px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #005EA6;
+            }
+        """)
+        paypal_button.clicked.connect(self.open_paypal)
+        layout.addWidget(paypal_button, alignment=Qt.AlignCenter)
+        
+        layout.addStretch()
+        
+        # 关闭按钮
+        close_button = QPushButton("关闭")
+        close_button.clicked.connect(self.accept)
+        layout.addWidget(close_button, alignment=Qt.AlignCenter)
+    
+    def create_qr_widget(self, platform, image_path):
+        """创建二维码显示组件"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setAlignment(Qt.AlignCenter)
+        
+        # 图片标签
+        pixmap = QPixmap()
+        if pixmap.load(image_path):
+            # 缩放为200x200正方形，保持比例，完整显示（可能留白）
+            pixmap = pixmap.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            # 创建200x200的正方形背景
+            square_pixmap = QPixmap(200, 200)
+            square_pixmap.fill(Qt.transparent)
+            painter = QPainter(square_pixmap)
+            # 将缩放后的图片绘制在中央
+            x = (200 - pixmap.width()) // 2
+            y = (200 - pixmap.height()) // 2
+            painter.drawPixmap(x, y, pixmap)
+            painter.end()
+            pixmap = square_pixmap
+        else:
+            # 如果图片不存在，创建灰色占位符
+            pixmap = QPixmap(200, 200)
+            pixmap.fill(QColor(200, 200, 200))
+            painter = QPainter(pixmap)
+            painter.setPen(QColor(100, 100, 100))
+            painter.drawText(pixmap.rect(), Qt.AlignCenter, f"{platform}\n二维码")
+            painter.end()
+        
+        image_label = QLabel()
+        image_label.setPixmap(pixmap)
+        image_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(image_label)
+        
+        # 平台名称
+        name_label = QLabel(platform)
+        name_label.setStyleSheet("font-weight: bold; margin-top: 10px; font-size: 14px;")
+        name_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(name_label)
+        
+        return widget
+    
+    def open_paypal(self):
+        """打开贝宝捐赠链接"""
+        import webbrowser
+        webbrowser.open("https://www.paypal.com/ncp/payment/FYDUKTJ33DQKW")
+        QMessageBox.information(self, "贝宝捐赠", "已打开贝宝捐赠页面，请按页面指示完成捐赠。感谢您的支持！")
+
+
 class AIGenerateDialog(QDialog):
     """AI生成提示词对话框"""
     def __init__(self, parent=None):
@@ -4373,7 +4499,13 @@ class MSPaintWindow(QMainWindow):
         # 帮助菜单
         help_menu = menubar.addMenu("帮助(&H)")
         help_menu.addAction("帮助主题")
-        help_menu.addAction("关于画图")
+        self.about_action = help_menu.addAction("关于画图")
+        self.about_action.triggered.connect(self.about_paint)
+        
+    def about_paint(self):
+        """关于画图 - 显示捐赠信息对话框"""
+        dialog = AboutDonationDialog(self)
+        dialog.exec_()
         
     def create_toolbox(self, main_layout):
         """创建左侧工具箱"""
