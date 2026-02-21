@@ -2105,6 +2105,7 @@ class PaintCanvas(QWidget):
             return
         
         # 在画布上绘制最终曲线
+        self.save_state()  # 保存状态用于撤销
         self.draw_catmull_rom_curve(self.curve_points)
         self.mark_content_modified()
         
