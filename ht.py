@@ -856,7 +856,7 @@ class AIGenerateDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("AI图像生成")
-        self.setFixedSize(500, 400)
+        self.setFixedSize(500, 600)
         self.setModal(True)
         
         # 获取父窗口的AI设置
@@ -876,7 +876,8 @@ class AIGenerateDialog(QDialog):
         # 提示词输入框
         self.prompt_textedit = QTextEdit()
         self.prompt_textedit.setPlaceholderText("例如：一只可爱的猫咪坐在窗台上，阳光洒进来，温馨的氛围")
-        self.prompt_textedit.setMaximumHeight(100)
+        self.prompt_textedit.setMinimumHeight(80)
+        self.prompt_textedit.setMaximumHeight(200)
         self.prompt_textedit.setStyleSheet("""
             QTextEdit {
                 border: 1px solid #808080;
@@ -905,9 +906,10 @@ class AIGenerateDialog(QDialog):
                 QPushButton {
                     background-color: #E8E5D8;
                     border: 1px solid #808080;
-                    padding: 3px;
+                    padding: 5px;
                     text-align: left;
-                    font-size: 11px;
+                    font-size: 13px;
+                    min-height: 24px;
                 }
                 QPushButton:hover {
                     background-color: #D4D0C8;
@@ -4864,7 +4866,7 @@ class MSPaintWindow(QMainWindow):
         line_width_spin = QSpinBox()
         line_width_spin.setRange(1, 50)
         line_width_spin.setValue(2)
-        line_width_spin.setFixedWidth(50)
+        line_width_spin.setFixedWidth(80)
         line_width_spin.valueChanged.connect(self.canvas.set_pen_width)
         
         line_width_layout.addWidget(line_width_label)
