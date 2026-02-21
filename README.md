@@ -1,4 +1,4 @@
-# Windows-Paint-AI-Version
+# Paint-AI
 
 # 画图AI版
 
