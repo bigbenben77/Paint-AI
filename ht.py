@@ -1047,13 +1047,55 @@ class AIGenerateDialog(QDialog):
             self.generated_images = image_data_list
             self.accept()
         else:
-            QMessageBox.warning(self, "错误", "未能生成图像")
+            # 创建自定义消息框
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Warning)
+            msg_box.setWindowTitle("错误")
+            msg_box.setText("正确生成图片请在设置对话框设置正确的参数")
+            
+            # 添加按钮
+            ok_button = msg_box.addButton("确定", QMessageBox.AcceptRole)
+            cancel_button = msg_box.addButton("取消", QMessageBox.RejectRole)
+            
+            # 显示消息框
+            result = msg_box.exec_()
+            
+            # 根据用户选择处理
+            if msg_box.clickedButton() == ok_button:
+                # 打开设置对话框
+                self.open_ai_setup_dialog()
+            # 如果点击取消，则直接返回画图应用界面（无需额外处理）
     
     def on_generation_error(self, error_msg):
         """生成错误"""
         self.progress_bar.setVisible(False)
         self.generate_button.setEnabled(True)
-        QMessageBox.critical(self, "错误", f"图像生成失败: {error_msg}")
+        
+        # 创建自定义消息框
+        msg_box = QMessageBox(self)
+        msg_box.setIcon(QMessageBox.Critical)
+        msg_box.setWindowTitle("错误")
+        msg_box.setText("正确生成图片请在设置对话框设置正确的参数")
+        
+        # 添加按钮
+        ok_button = msg_box.addButton("确定", QMessageBox.AcceptRole)
+        cancel_button = msg_box.addButton("取消", QMessageBox.RejectRole)
+        
+        # 显示消息框
+        result = msg_box.exec_()
+        
+        # 根据用户选择处理
+        if msg_box.clickedButton() == ok_button:
+            # 打开设置对话框
+            self.open_ai_setup_dialog()
+        # 如果点击取消，则直接返回画图应用界面（无需额外处理）
+    
+    def open_ai_setup_dialog(self):
+        """打开AI设置对话框"""
+        # 获取父窗口（主窗口）
+        parent_window = self.parent_window
+        if parent_window and hasattr(parent_window, 'show_ai_setup_dialog'):
+            parent_window.show_ai_setup_dialog()
 
 
 class AIImageWorker(QThread):
@@ -4190,13 +4232,37 @@ class MSPaintWindow(QMainWindow):
             self.canvas.text_tool_dialog = None
         
         if self.canvas.is_content_modified():
-            reply = QMessageBox.question(
-                self,
-                "保存更改",
-                "画布内容已更改。\n\n是否保存更改？",
-                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
-                QMessageBox.Save
-            )
+            # 创建自定义按钮的对话框
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("保存更改")
+            msg_box.setText("画布内容已更改。\n\n是否保存更改？")
+            msg_box.setIcon(QMessageBox.Question)
+            
+            # 添加中文按钮
+            save_button = msg_box.addButton("保存", QMessageBox.AcceptRole)
+            discard_button = msg_box.addButton("弃存", QMessageBox.DestructiveRole)
+            cancel_button = msg_box.addButton("取消", QMessageBox.RejectRole)
+            
+            # 设置默认按钮
+            msg_box.setDefaultButton(save_button)
+            
+            # 显示对话框
+            msg_box.exec_()
+            
+            # 获取点击的按钮
+            clicked_button = msg_box.clickedButton()
+            
+            if clicked_button == save_button:
+                # 尝试保存文件
+                if not self.save_current_file():
+                    # 如果保存失败或被取消，阻止关闭
+                    event.ignore()
+                    return
+            elif clicked_button == cancel_button:
+                # 取消关闭
+                event.ignore()
+                return
+            # 如果选择的是discard_button，则直接关闭
             
             if reply == QMessageBox.Save:
                 # 尝试保存文件
@@ -5196,11 +5262,30 @@ class MSPaintWindow(QMainWindow):
         """新建文件"""
         # 检查是否有未保存的更改
         if self.canvas.is_content_modified():
-            reply = QMessageBox.question(
-                self, "确认新建",
-                "当前有未保存的更改，是否保存？",
-                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel
-            )
+            # 创建自定义按钮的对话框
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("确认新建")
+            msg_box.setText("当前有未保存的更改，是否保存？")
+            msg_box.setIcon(QMessageBox.Question)
+            
+            # 添加中文按钮
+            save_button = msg_box.addButton("保存", QMessageBox.AcceptRole)
+            discard_button = msg_box.addButton("弃存", QMessageBox.DestructiveRole)
+            cancel_button = msg_box.addButton("取消", QMessageBox.RejectRole)
+            
+            # 设置默认按钮
+            msg_box.setDefaultButton(save_button)
+            
+            # 显示对话框
+            msg_box.exec_()
+            
+            # 获取点击的按钮
+            clicked_button = msg_box.clickedButton()
+            
+            if clicked_button == save_button:
+                self.save_file()
+            elif clicked_button == cancel_button:
+                return
             
             if reply == QMessageBox.Save:
                 self.save_file()
@@ -5224,11 +5309,30 @@ class MSPaintWindow(QMainWindow):
         """打开文件"""
         # 检查是否有未保存的更改
         if self.canvas.is_content_modified():
-            reply = QMessageBox.question(
-                self, "确认打开",
-                "当前有未保存的更改，是否保存？",
-                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel
-            )
+            # 创建自定义按钮的对话框
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("确认打开")
+            msg_box.setText("当前有未保存的更改，是否保存？")
+            msg_box.setIcon(QMessageBox.Question)
+            
+            # 添加中文按钮
+            save_button = msg_box.addButton("保存", QMessageBox.AcceptRole)
+            discard_button = msg_box.addButton("弃存", QMessageBox.DestructiveRole)
+            cancel_button = msg_box.addButton("取消", QMessageBox.RejectRole)
+            
+            # 设置默认按钮
+            msg_box.setDefaultButton(save_button)
+            
+            # 显示对话框
+            msg_box.exec_()
+            
+            # 获取点击的按钮
+            clicked_button = msg_box.clickedButton()
+            
+            if clicked_button == save_button:
+                self.save_file()
+            elif clicked_button == cancel_button:
+                return
             
             if reply == QMessageBox.Save:
                 self.save_file()
