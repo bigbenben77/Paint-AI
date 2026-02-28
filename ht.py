@@ -4263,18 +4263,6 @@ class MSPaintWindow(QMainWindow):
                 event.ignore()
                 return
             # 如果选择的是discard_button，则直接关闭
-            
-            if reply == QMessageBox.Save:
-                # 尝试保存文件
-                if not self.save_current_file():
-                    # 如果保存失败或被取消，阻止关闭
-                    event.ignore()
-                    return
-            elif reply == QMessageBox.Cancel:
-                # 取消关闭
-                event.ignore()
-                return
-            # 如果选择的是Discard，则直接关闭
         
         # 如果没有修改或用户选择不保存，则正常关闭
         event.accept()
