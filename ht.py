@@ -64,7 +64,7 @@ class ImagePropertiesDialog(QDialog):
     def __init__(self, parent=None, current_width=527, current_height=421):
         super().__init__(parent)
         self.setWindowTitle("属性")
-        self.setFixedSize(300, 280)
+        self.setFixedSize(300, 380)
         
         # 保存当前画布尺寸
         self.current_width = current_width
