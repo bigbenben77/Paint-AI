@@ -4904,9 +4904,9 @@ class MSPaintWindow(QMainWindow):
         
         # ===== 右侧笔刷设置区域 =====
         brush_widget = QWidget()
-        brush_widget.setFixedWidth(150)
+        brush_widget.setFixedWidth(400)
         brush_layout = QVBoxLayout(brush_widget)
-        brush_layout.setContentsMargins(40, 10, 0, 0)  # 增加上边距，向下移动
+        brush_layout.setContentsMargins(10, 10, 0, 0)  # 增加上边距，向下移动
         brush_layout.setSpacing(5)
         
         # 线宽选择
@@ -4915,13 +4915,13 @@ class MSPaintWindow(QMainWindow):
         line_width_layout.setContentsMargins(0, 0, 0, 0)
         
         line_width_label = QLabel("线宽:")
-        line_width_label.setStyleSheet("font-size: 9px; color: black;")
+        line_width_label.setStyleSheet("font-size: 16px; color: black;")
         line_width_label.setFixedWidth(30)
         
         line_width_spin = QSpinBox()
         line_width_spin.setRange(1, 50)
         line_width_spin.setValue(2)
-        line_width_spin.setFixedWidth(80)
+        line_width_spin.setFixedSize(150, 32)
         line_width_spin.valueChanged.connect(self.canvas.set_pen_width)
         
         line_width_layout.addWidget(line_width_label)
@@ -4934,13 +4934,13 @@ class MSPaintWindow(QMainWindow):
         line_style_layout.setContentsMargins(0, 0, 0, 0)
         
         line_style_label = QLabel("线型:")
-        line_style_label.setStyleSheet("font-size: 9px; color: black;")
+        line_style_label.setStyleSheet("font-size: 16px; color: black;")
         line_style_label.setFixedWidth(30)
         
         line_style_combo = QComboBox()
         line_style_combo.addItems(["实线", "虚线", "点线", "点划线", "双点划线"])
         line_style_combo.setCurrentIndex(0)
-        line_style_combo.setFixedWidth(80)
+        line_style_combo.setFixedSize(150, 32)
         line_style_combo.currentIndexChanged.connect(self.canvas.set_pen_style)
         
         line_style_layout.addWidget(line_style_label)
