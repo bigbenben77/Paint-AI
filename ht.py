@@ -64,7 +64,7 @@ class ImagePropertiesDialog(QDialog):
     def __init__(self, parent=None, current_width=527, current_height=421):
         super().__init__(parent)
         self.setWindowTitle("属性")
-        self.setFixedSize(300, 380)
+        self.setFixedSize(300, 280)
         
         # 保存当前画布尺寸
         self.current_width = current_width
@@ -5275,11 +5275,6 @@ class MSPaintWindow(QMainWindow):
             elif clicked_button == cancel_button:
                 return
             
-            if reply == QMessageBox.Save:
-                self.save_file()
-            elif reply == QMessageBox.Cancel:
-                return
-        
         # 创建新的空白画布
         self.canvas.image = QPixmap(720, 520)  # 默认尺寸
         self.canvas.image.fill(Qt.white)
@@ -5322,11 +5317,6 @@ class MSPaintWindow(QMainWindow):
             elif clicked_button == cancel_button:
                 return
             
-            if reply == QMessageBox.Save:
-                self.save_file()
-            elif reply == QMessageBox.Cancel:
-                return
-        
         # 打开文件对话框
         file_path, _ = QFileDialog.getOpenFileName(
             self, "打开图像", "",
