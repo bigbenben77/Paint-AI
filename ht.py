@@ -64,7 +64,7 @@ class ImagePropertiesDialog(QDialog):
     def __init__(self, parent=None, current_width=527, current_height=421):
         super().__init__(parent)
         self.setWindowTitle("属性")
-        self.setFixedSize(300, 280)
+        self.setFixedSize(300, 380)
         
         # 保存当前画布尺寸
         self.current_width = current_width
@@ -1034,7 +1034,7 @@ class AIGenerateDialog(QDialog):
             self.timeout_spin.value(),
             self.ai_settings
         )
-        self.worker_thread.finished.connect(self.on_generation_finished)
+        self.worker_thread.generation_finished.connect(self.on_generation_finished)
         self.worker_thread.error.connect(self.on_generation_error)
         self.worker_thread.start()
     
@@ -1100,7 +1100,7 @@ class AIGenerateDialog(QDialog):
 
 class AIImageWorker(QThread):
     """AI图像生成工作线程"""
-    finished = pyqtSignal(list)
+    generation_finished = pyqtSignal(list)
     error = pyqtSignal(str)
     
     def __init__(self, prompt, n=1, timeout=60, settings=None):
@@ -1128,7 +1128,7 @@ class AIImageWorker(QThread):
             
             # 如果还没有超时,发送完成信号
             if self._is_running:
-                self.finished.emit(image_data_list)
+                self.generation_finished.emit(image_data_list)
         except requests.exceptions.Timeout:
             if self._is_running:
                 self.error.emit(f"API请求超时({self.timeout}秒),请检查网络连接或增加超时时间")
@@ -5274,7 +5274,7 @@ class MSPaintWindow(QMainWindow):
                 self.save_file()
             elif clicked_button == cancel_button:
                 return
-            
+        
         # 创建新的空白画布
         self.canvas.image = QPixmap(720, 520)  # 默认尺寸
         self.canvas.image.fill(Qt.white)
@@ -5316,7 +5316,7 @@ class MSPaintWindow(QMainWindow):
                 self.save_file()
             elif clicked_button == cancel_button:
                 return
-            
+        
         # 打开文件对话框
         file_path, _ = QFileDialog.getOpenFileName(
             self, "打开图像", "",
